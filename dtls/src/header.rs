@@ -1,0 +1,79 @@
+use crate::buffer::BufReader;
+
+// https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-5
+pub enum ContentType {
+    ChangeCipherSpec = 20,
+    Alert = 21,
+    Handshake = 22,
+    ApplicationData = 23,
+}
+
+impl TryFrom<u8> for ContentType {
+    type Error = String;
+
+    fn try_from(val: u8) -> Result<Self, Self::Error> {
+        match val {
+            20 => Ok(ContentType::ChangeCipherSpec),
+            21 => Ok(ContentType::Alert),
+            22 => Ok(ContentType::Handshake),
+            23 => Ok(ContentType::ApplicationData),
+            _ => Err(format!("invalid content type: {}", val)),
+        }
+    }
+}
+
+const DTLS_VERSION_1_0: u16 = 0xfeff;
+const DTLS_VERSION_1_2: u16 = 0xfefd;
+
+pub struct DtlsVersion {
+    major: u8,
+    minor: u8,
+}
+
+impl TryFrom<u16> for DtlsVersion {
+    type Error = String;
+
+    fn try_from(val: u16) -> Result<Self, Self::Error> {
+        match val {
+            DTLS_VERSION_1_0 => Ok(DtlsVersion { major: 1, minor: 0 }),
+            DTLS_VERSION_1_2 => Ok(DtlsVersion { major: 1, minor: 2 }),
+            _ => Err(format!("invalid dtls version: {}", val)),
+        }
+    }
+}
+
+pub struct RecordHeader {
+    content_type: ContentType,
+    version: DtlsVersion,
+    epoch: u16,
+    sequence_number: u64, // u48
+    length: u16,
+}
+
+impl RecordHeader {
+    pub fn decode(buf: &[u8]) -> Result<Self, String> {
+        let mut reader = BufReader::new(buf);
+
+        let content_type_byte = reader.read_u8()?;
+        let content_type = content_type_byte.try_into()?;
+
+        let version_bytes = reader.read_u16()?;
+        let version = DtlsVersion::try_from(version_bytes)?;
+
+        let epoch = reader.read_u16()?;
+
+        let sequence_number1 = reader.read_u16()?;
+        let sequence_number2 = reader.read_u32()?;
+        let sequence_number = ((sequence_number1 as u64) << 4) + (sequence_number2 as u64);
+
+        let length = reader.read_u16()?;
+
+        Ok(Self {
+            content_type,
+            version,
+            epoch,
+            sequence_number,
+            length,
+        })
+    }
+}
