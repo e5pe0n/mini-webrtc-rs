@@ -1,8 +1,9 @@
 mod buffer;
 mod handshake;
-mod header;
+mod record_header;
 
-use crate::header::RecordHeader;
+use crate::handshake::*;
+use crate::record_header::RecordHeader;
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
