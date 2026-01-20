@@ -29,6 +29,14 @@ impl<'a> BufReader<'a> {
         }
     }
 
+    pub fn read_u24(&mut self) -> Result<u32, String> {
+        let head = self.read_u16()?;
+        let tail = self.read_u8()?;
+        let res = ((head as u32) << 1) + (tail as u32);
+
+        Ok(res)
+    }
+
     pub fn read_u32(&mut self) -> Result<u32, String> {
         if self.pos < self.buf.len() {
             let b = u32::from_be_bytes(self.buf[self.pos..self.pos + 4].try_into().unwrap());

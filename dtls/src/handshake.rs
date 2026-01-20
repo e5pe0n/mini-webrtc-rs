@@ -48,19 +48,13 @@ impl HandshakeHeader {
         let handshake_type_u8 = reader.read_u8()?;
         let handshake_type = HandshakeType::try_from(handshake_type_u8)?;
 
-        let length1 = reader.read_u16()?;
-        let length2 = reader.read_u8()?;
-        let length = ((length1 as u32) << 1) + (length2 as u32);
+        let length = reader.read_u24()?;
 
         let message_seq = reader.read_u16()?;
 
-        let fragment_offset1 = reader.read_u16()?;
-        let fragment_offset2 = reader.read_u8()?;
-        let fragment_offset = ((fragment_offset1 as u32) << 1) + (fragment_offset2 as u32);
+        let fragment_offset = reader.read_u24()?;
 
-        let fragment_length1 = reader.read_u16()?;
-        let fragment_length2 = reader.read_u8()?;
-        let fragment_length = ((fragment_length1 as u32) << 1) + (fragment_length2 as u32);
+        let fragment_length = reader.read_u24()?;
 
         Ok(Self {
             handshake_type,
