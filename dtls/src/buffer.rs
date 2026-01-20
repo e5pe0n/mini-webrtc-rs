@@ -51,8 +51,8 @@ impl<'a> BufReader<'a> {
         }
     }
 
-    pub fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
-        self.buf.read_exact(buf)?;
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), String> {
+        self.buf.read_exact(buf).map_err(|err| err.to_string())?;
         self.pos += buf.len();
         Ok(())
     }
