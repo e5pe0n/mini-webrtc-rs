@@ -1,4 +1,5 @@
 mod buffer;
+mod handshake;
 mod header;
 
 use crate::header::RecordHeader;
