@@ -36,6 +36,8 @@ impl<'a> BufReader<'a> {
         let tail = self.read_u8()?;
         let res = ((head as u32) << 1) + (tail as u32);
 
+        self.pos += 3;
+
         Ok(res)
     }
 
