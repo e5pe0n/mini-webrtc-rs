@@ -1,3 +1,5 @@
+use std::io::Read;
+
 #[derive(Debug)]
 pub struct BufReader<'a> {
     buf: &'a [u8],
@@ -45,5 +47,11 @@ impl<'a> BufReader<'a> {
         } else {
             Err("out of index".to_string())
         }
+    }
+
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        self.buf.read_exact(buf)?;
+        self.pos += buf.len();
+        Ok(())
     }
 }
