@@ -1,4 +1,5 @@
 mod buffer;
+mod extension;
 mod handshake;
 mod record_header;
 
