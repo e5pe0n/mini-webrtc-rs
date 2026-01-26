@@ -1,4 +1,7 @@
-use crate::{buffer::BufReader, record_header::DtlsVersion};
+use crate::{
+    buffer::{BufReader, BufWriter},
+    record_header::DtlsVersion,
+};
 
 struct HelloVerifyRequest {
     version: DtlsVersion,
@@ -15,5 +18,12 @@ impl HelloVerifyRequest {
         reader.read_exact(&mut cookie)?;
 
         Ok(Self { version, cookie })
+    }
+
+    pub fn encode(&self, writer: &mut BufWriter) {
+        self.version.encode(writer);
+        for byte in &self.cookie {
+            writer.write_u8(*byte);
+        }
     }
 }

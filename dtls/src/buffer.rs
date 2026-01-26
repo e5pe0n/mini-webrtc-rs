@@ -57,3 +57,32 @@ impl<'a> BufReader<'a> {
         Ok(())
     }
 }
+
+#[derive(Debug)]
+pub struct BufWriter {
+    buf: Vec<u8>,
+}
+
+impl BufWriter {
+    pub fn write_u8(&mut self, value: u8) {
+        self.buf.push(value);
+    }
+
+    pub fn write_u16(&mut self, value: u16) {
+        self.buf.push((value >> 8) as u8);
+        self.buf.push(value as u8);
+    }
+
+    pub fn write_u24(&mut self, value: u32) {
+        self.buf.push((value >> 16) as u8);
+        self.buf.push((value >> 8) as u8);
+        self.buf.push(value as u8);
+    }
+
+    pub fn write_u32(&mut self, value: u32) {
+        self.buf.push((value >> 24) as u8);
+        self.buf.push((value >> 16) as u8);
+        self.buf.push((value >> 8) as u8);
+        self.buf.push(value as u8);
+    }
+}

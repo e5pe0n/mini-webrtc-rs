@@ -1,4 +1,4 @@
-use crate::buffer::BufReader;
+use crate::buffer::{BufReader, BufWriter};
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-5
 pub enum ContentType {
@@ -39,6 +39,13 @@ impl TryFrom<u16> for DtlsVersion {
             DTLS_VERSION_1_2 => Ok(DtlsVersion { major: 1, minor: 2 }),
             _ => Err(format!("invalid dtls version: {}", val)),
         }
+    }
+}
+
+impl DtlsVersion {
+    pub fn encode(&self, writer: &mut BufWriter) {
+        writer.write_u8(self.major);
+        writer.write_u8(self.minor);
     }
 }
 
