@@ -51,9 +51,7 @@ pub struct RecordHeader {
 }
 
 impl RecordHeader {
-    pub fn decode(buf: &[u8]) -> Result<Self, String> {
-        let mut reader = BufReader::new(buf);
-
+    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
         let content_type_byte = reader.read_u8()?;
         let content_type = content_type_byte.try_into()?;
 
