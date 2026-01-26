@@ -1,5 +1,6 @@
-use crate::buffer::BufReader;
+use crate::buffer::{BufReader, BufWriter};
 
+#[derive(Debug, Clone, Copy)]
 pub enum HandshakeType {
     HelloRequest = 0,
     ClientHello = 1,
@@ -44,6 +45,22 @@ pub struct HandshakeHeader {
 }
 
 impl HandshakeHeader {
+    pub fn new(
+        handshake_type: HandshakeType,
+        length: u32,
+        message_seq: u16,
+        fragment_offset: u32,
+        fragment_length: u32,
+    ) -> Self {
+        Self {
+            handshake_type,
+            length,
+            message_seq,
+            fragment_offset,
+            fragment_length,
+        }
+    }
+
     pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
         let handshake_type_u8 = reader.read_u8()?;
         let handshake_type = HandshakeType::try_from(handshake_type_u8)?;
@@ -63,5 +80,13 @@ impl HandshakeHeader {
             fragment_offset,
             fragment_length,
         })
+    }
+
+    pub fn encode(&self, writer: &mut BufWriter) {
+        writer.write_u8(self.handshake_type as u8);
+        writer.write_u24(self.length);
+        writer.write_u16(self.message_seq);
+        writer.write_u24(self.fragment_offset);
+        writer.write_u24(self.fragment_length);
     }
 }

@@ -3,9 +3,10 @@ mod extension;
 mod handshake;
 mod record_header;
 
-use crate::hello_verify_request::HelloVerifyRequest;
+use crate::handshake::hello_verify_request::HelloVerifyRequest;
+use crate::handshake::{HandshakeHeader, HandshakeType};
 use crate::record_header::{DtlsVersion, RecordHeader};
-use crate::{buffer::BufWriter, handshake::*};
+use crate::buffer::BufWriter;
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
@@ -128,15 +129,40 @@ impl DtlsServer {
         &mut self,
         peer_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("  <- Sending ServerHello to {}", peer_addr);
+        println!("  <- Sending HelloVerifyRequest to {}", peer_addr);
 
-        let mut writer = BufWriter::new();
-
+        // Create HelloVerifyRequest payload
+        let mut payload_writer = BufWriter::new();
         let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2), vec![]);
+        hello_verify_request.encode(&mut payload_writer);
+        let payload = payload_writer.buf();
 
-        hello_verify_request.encode(&mut writer);
+        // Create Handshake Header
+        let mut handshake_writer = BufWriter::new();
+        let handshake_header = HandshakeHeader::new(
+            HandshakeType::HelloVerifyRequest,
+            payload.len() as u32,
+            0, // message_seq
+            0, // fragment_offset
+            payload.len() as u32, // fragment_length
+        );
+        handshake_header.encode(&mut handshake_writer);
+        handshake_writer.write_bytes(payload);
+        let handshake_message = handshake_writer.buf();
 
-        self.socket.send_to(&writer.buf(), peer_addr).await?;
+        // Create Record Header
+        let mut record_writer = BufWriter::new();
+        let record_header = RecordHeader::new(
+            record_header::ContentType::Handshake,
+            DtlsVersion::new(1, 2),
+            0, // epoch
+            0, // sequence_number
+            handshake_message.len() as u16,
+        );
+        record_header.encode(&mut record_writer);
+        record_writer.write_bytes(handshake_message);
+
+        self.socket.send_to(&record_writer.buf(), peer_addr).await?;
 
         Ok(())
     }

@@ -1,6 +1,7 @@
 use crate::buffer::{BufReader, BufWriter};
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-5
+#[derive(Debug, Clone, Copy)]
 pub enum ContentType {
     ChangeCipherSpec = 20,
     Alert = 21,
@@ -62,6 +63,22 @@ pub struct RecordHeader {
 }
 
 impl RecordHeader {
+    pub fn new(
+        content_type: ContentType,
+        version: DtlsVersion,
+        epoch: u16,
+        sequence_number: u64,
+        length: u16,
+    ) -> Self {
+        Self {
+            content_type,
+            version,
+            epoch,
+            sequence_number,
+            length,
+        }
+    }
+
     pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
         let content_type_byte = reader.read_u8()?;
         let content_type = content_type_byte.try_into()?;
@@ -84,5 +101,15 @@ impl RecordHeader {
             sequence_number,
             length,
         })
+    }
+
+    pub fn encode(&self, writer: &mut BufWriter) {
+        writer.write_u8(self.content_type as u8);
+        self.version.encode(writer);
+        writer.write_u16(self.epoch);
+        // Write 48-bit sequence number as u16 + u32
+        writer.write_u16((self.sequence_number >> 32) as u16);
+        writer.write_u32((self.sequence_number & 0xFFFFFFFF) as u32);
+        writer.write_u16(self.length);
     }
 }

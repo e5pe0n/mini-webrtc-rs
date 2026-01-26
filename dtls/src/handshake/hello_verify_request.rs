@@ -26,6 +26,7 @@ impl HelloVerifyRequest {
 
     pub fn encode(&self, writer: &mut BufWriter) {
         self.version.encode(writer);
+        writer.write_u8(self.cookie.len() as u8);
         for byte in &self.cookie {
             writer.write_u8(*byte);
         }
