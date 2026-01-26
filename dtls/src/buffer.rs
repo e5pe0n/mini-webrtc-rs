@@ -64,6 +64,14 @@ pub struct BufWriter {
 }
 
 impl BufWriter {
+    pub fn new() -> Self {
+        Self { buf: vec![] }
+    }
+
+    pub fn buf(&self) -> Vec<u8> {
+        self.buf.clone()
+    }
+
     pub fn write_u8(&mut self, value: u8) {
         self.buf.push(value);
     }

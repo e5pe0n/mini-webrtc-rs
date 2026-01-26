@@ -3,8 +3,9 @@ mod extension;
 mod handshake;
 mod record_header;
 
-use crate::handshake::*;
-use crate::record_header::RecordHeader;
+use crate::hello_verify_request::HelloVerifyRequest;
+use crate::record_header::{DtlsVersion, RecordHeader};
+use crate::{buffer::BufWriter, handshake::*};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
@@ -105,7 +106,7 @@ impl DtlsServer {
         match handshake_type {
             1 => {
                 println!("  -> ClientHello from {}", peer_addr);
-                self.send_server_hello(peer_addr).await?;
+                self.send_hello_verify_request(peer_addr).await?;
             }
             11 => println!("  -> Certificate from {}", peer_addr),
             12 => println!("  -> ServerKeyExchange from {}", peer_addr),
@@ -123,16 +124,19 @@ impl DtlsServer {
         Ok(())
     }
 
-    async fn send_server_hello(
+    async fn send_hello_verify_request(
         &mut self,
         peer_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("  <- Sending ServerHello to {}", peer_addr);
 
-        // This is a placeholder - actual DTLS ServerHello would be much more complex
-        // For a real implementation, you'd need a proper DTLS library
-        let response = b"DTLS ServerHello (placeholder)";
-        self.socket.send_to(response, peer_addr).await?;
+        let mut writer = BufWriter::new();
+
+        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2), vec![]);
+
+        hello_verify_request.encode(&mut writer);
+
+        self.socket.send_to(&writer.buf(), peer_addr).await?;
 
         Ok(())
     }

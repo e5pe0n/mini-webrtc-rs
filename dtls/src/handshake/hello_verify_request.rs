@@ -3,12 +3,16 @@ use crate::{
     record_header::DtlsVersion,
 };
 
-struct HelloVerifyRequest {
+pub struct HelloVerifyRequest {
     version: DtlsVersion,
     cookie: Vec<u8>,
 }
 
 impl HelloVerifyRequest {
+    pub fn new(version: DtlsVersion, cookie: Vec<u8>) -> Self {
+        Self { version, cookie }
+    }
+
     pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
         let version_u16 = reader.read_u16()?;
         let version = DtlsVersion::try_from(version_u16)?;

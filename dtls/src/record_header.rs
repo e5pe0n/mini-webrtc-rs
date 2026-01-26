@@ -43,6 +43,10 @@ impl TryFrom<u16> for DtlsVersion {
 }
 
 impl DtlsVersion {
+    pub fn new(major: u8, minor: u8) -> Self {
+        Self { major, minor }
+    }
+
     pub fn encode(&self, writer: &mut BufWriter) {
         writer.write_u8(self.major);
         writer.write_u8(self.minor);
