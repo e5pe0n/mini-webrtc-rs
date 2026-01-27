@@ -37,11 +37,11 @@ impl TryFrom<u8> for HandshakeType {
 }
 
 pub struct HandshakeHeader {
-    handshake_type: HandshakeType,
-    length: u32, // u24
-    message_seq: u16,
-    fragment_offset: u32, // u24
-    fragment_length: u32, // u24
+    pub handshake_type: HandshakeType,
+    pub length: u32, // u24
+    pub message_seq: u16,
+    pub fragment_offset: u32, // u24
+    pub fragment_length: u32, // u24
 }
 
 impl HandshakeHeader {

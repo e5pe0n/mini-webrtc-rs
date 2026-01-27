@@ -55,11 +55,11 @@ impl DtlsVersion {
 }
 
 pub struct RecordHeader {
-    content_type: ContentType,
-    version: DtlsVersion,
-    epoch: u16,
-    sequence_number: u64, // u48
-    length: u16,
+    pub content_type: ContentType,
+    pub version: DtlsVersion,
+    pub epoch: u16,
+    pub sequence_number: u64, // u48
+    pub length: u16,
 }
 
 impl RecordHeader {

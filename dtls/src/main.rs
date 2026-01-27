@@ -3,10 +3,11 @@ mod extension;
 mod handshake;
 mod record_header;
 
+use crate::buffer::{BufReader, BufWriter};
+use crate::handshake::context::HandshakeFlightContext;
+use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
-use crate::handshake::{HandshakeHeader, HandshakeType};
-use crate::record_header::{DtlsVersion, RecordHeader};
-use crate::buffer::BufWriter;
+use crate::record_header::{ContentType, DtlsVersion, RecordHeader};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
@@ -18,6 +19,7 @@ struct DtlsServer {
     certified_key: CertifiedKey<KeyPair>,
     fingerprint: GenericArray<u8, U32>,
     socket: UdpSocket,
+    handshake_flight_context: HandshakeFlightContext,
 }
 
 impl DtlsServer {
@@ -34,6 +36,7 @@ impl DtlsServer {
             certified_key,
             fingerprint,
             socket,
+            handshake_flight_context: HandshakeFlightContext::Flight0,
         })
     }
 
@@ -101,28 +104,42 @@ impl DtlsServer {
             return Ok(());
         }
 
-        // DTLS record header: content_type(1) + version(2) + epoch(2) + sequence(6) + length(2)
-        let handshake_type = data[13];
+        let mut reader = BufReader::new(data);
+        let record_header = RecordHeader::decode(&mut reader)?;
 
-        match handshake_type {
-            1 => {
-                println!("  -> ClientHello from {}", peer_addr);
-                self.send_hello_verify_request(peer_addr).await?;
+        match record_header.content_type {
+            ContentType::Handshake => {
+                let handshake_header = HandshakeHeader::decode(&mut reader)?;
+
+                match handshake_header.handshake_type {
+                    HandshakeType::ClientHello => {}
+                    _ => println!(
+                        "  -> Unknown handshake type {:?} from {}",
+                        handshake_header.handshake_type, peer_addr
+                    ),
+                }
+
+                Ok(())
             }
-            11 => println!("  -> Certificate from {}", peer_addr),
-            12 => println!("  -> ServerKeyExchange from {}", peer_addr),
-            13 => println!("  -> CertificateRequest from {}", peer_addr),
-            14 => println!("  -> ServerHelloDone from {}", peer_addr),
-            15 => println!("  -> CertificateVerify from {}", peer_addr),
-            16 => println!("  -> ClientKeyExchange from {}", peer_addr),
-            20 => println!("  -> Finished from {}", peer_addr),
-            _ => println!(
-                "  -> Unknown handshake type {} from {}",
-                handshake_type, peer_addr
-            ),
+            _ => {
+                println!("invalid content type");
+                Err("invalid content type".into())
+            }
         }
+    }
 
-        Ok(())
+    async fn handle_client_hello(
+        &mut self,
+        peer_addr: SocketAddr,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        println!("  -> ClientHello from {}", peer_addr);
+        match self.handshake_flight_context {
+            HandshakeFlightContext::Flight0 => self.send_hello_verify_request(peer_addr).await,
+            HandshakeFlightContext::Flight2(context) => {
+                // TODO: send ServerHello, Certificate, ServerKeyExchange, CertificateRequest, ServerHelloDone
+            }
+            _ => Err("invalid flight context".into()),
+        }
     }
 
     async fn send_hello_verify_request(
@@ -142,8 +159,8 @@ impl DtlsServer {
         let handshake_header = HandshakeHeader::new(
             HandshakeType::HelloVerifyRequest,
             payload.len() as u32,
-            0, // message_seq
-            0, // fragment_offset
+            0,                    // message_seq
+            0,                    // fragment_offset
             payload.len() as u32, // fragment_length
         );
         handshake_header.encode(&mut handshake_writer);
