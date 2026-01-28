@@ -1,10 +1,11 @@
 mod buffer;
+mod common;
 mod extension;
 mod handshake;
 mod record_header;
 
 use crate::buffer::{BufReader, BufWriter};
-use crate::handshake::context::HandshakeFlightContext;
+use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
 use crate::record_header::{ContentType, DtlsVersion, RecordHeader};
@@ -19,7 +20,7 @@ struct DtlsServer {
     certified_key: CertifiedKey<KeyPair>,
     fingerprint: GenericArray<u8, U32>,
     socket: UdpSocket,
-    handshake_flight_context: HandshakeFlightContext,
+    pub handshake_flight_context: HandshakeFlightContext,
 }
 
 impl DtlsServer {
@@ -150,7 +151,7 @@ impl DtlsServer {
 
         // Create HelloVerifyRequest payload
         let mut payload_writer = BufWriter::new();
-        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2), vec![]);
+        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2), cookie.into());
         hello_verify_request.encode(&mut payload_writer);
         let payload = payload_writer.buf();
 
@@ -181,6 +182,9 @@ impl DtlsServer {
 
         self.socket.send_to(&record_writer.buf(), peer_addr).await?;
 
+        self.handshake_flight_context = HandshakeFlightContext::Flight2(Flight2Context::new(
+            hello_verify_request.cookie.clone(),
+        ));
         Ok(())
     }
 }

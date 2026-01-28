@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use crate::buffer::BufReader;
+use crate::buffer::{BufReader, BufWriter};
 
 const RANDOM_BYTES_LENGTH: usize = 28;
 
@@ -19,5 +19,14 @@ impl Random {
             gmt_unix_time,
             random_bytes,
         })
+    }
+
+    pub fn encode(&self, writer: &mut BufWriter) {
+        let gmt_unix_time_u32 = self
+            .gmt_unix_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+        writer.write_u32(gmt_unix_time_u32);
     }
 }

@@ -1,12 +1,17 @@
-use crate::{buffer::BufReader, handshake::random::Random, record_header::DtlsVersion};
+use crate::{
+    buffer::BufReader,
+    common::{CipherSuiteId, CompressionMethodId, Cookie},
+    handshake::random::Random,
+    record_header::DtlsVersion,
+};
 
 struct ClientHello {
     version: DtlsVersion,
     random: Random,
-    session_id: Vec<u8>,
-    cookie: Vec<u8>,
-    cipher_suite_ids: Vec<u16>,
-    compression_method_ids: Vec<u8>,
+    // session_id: SessionId,
+    cookie: Cookie,
+    cipher_suite_ids: Vec<CipherSuiteId>,
+    compression_method_ids: Vec<CompressionMethodId>,
     // extensions: Vec<Extension>,
 }
 
@@ -16,14 +21,14 @@ impl ClientHello {
         let version = DtlsVersion::try_from(raw_version)?;
 
         let random = Random::decode(reader)?;
-
+        // ignore session id; not support session resumption
         let session_id_length = reader.read_u8()?;
         let mut session_id = vec![0u8; session_id_length as usize];
         reader.read_exact(&mut session_id)?;
 
         let cookie_length = reader.read_u8()?;
-        let mut cookie = vec![0u8; cookie_length as usize];
-        reader.read_exact(&mut cookie)?;
+        let mut cookie_buf = vec![0u8; cookie_length as usize];
+        reader.read_exact(&mut cookie_buf)?;
 
         let cipher_suite_ids_length = reader.read_u16()?;
         let num_cipher_suite_ids = cipher_suite_ids_length / 2;
@@ -45,8 +50,8 @@ impl ClientHello {
         Ok(Self {
             version,
             random,
-            session_id,
-            cookie,
+            // session_id,
+            cookie: Cookie::try_from(cookie_buf)?,
             cipher_suite_ids,
             compression_method_ids,
         })
