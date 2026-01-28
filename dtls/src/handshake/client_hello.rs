@@ -1,12 +1,17 @@
-use crate::{buffer::BufReader, handshake::random::Random, record_header::DtlsVersion};
+use crate::{
+    buffer::BufReader,
+    common::{CipherSuiteId, CompressionMethodId, Cookie},
+    handshake::random::Random,
+    record_header::DtlsVersion,
+};
 
 struct ClientHello {
     version: DtlsVersion,
     random: Random,
-    session_id: Vec<u8>,
-    cookie: Vec<u8>,
-    cipher_suite_ids: Vec<u16>,
-    compression_method_ids: Vec<u8>,
+    // session_id: SessionId,
+    cookie: Cookie,
+    cipher_suite_ids: Vec<CipherSuiteId>,
+    compression_method_ids: Vec<CompressionMethodId>,
     // extensions: Vec<Extension>,
 }
 
@@ -16,28 +21,28 @@ impl ClientHello {
         let version = DtlsVersion::try_from(raw_version)?;
 
         let random = Random::decode(reader)?;
-
+        // ignore session id; not support session resumption
         let session_id_length = reader.read_u8()?;
         let mut session_id = vec![0u8; session_id_length as usize];
         reader.read_exact(&mut session_id)?;
 
         let cookie_length = reader.read_u8()?;
-        let mut cookie = vec![0u8; cookie_length as usize];
-        reader.read_exact(&mut cookie)?;
+        let mut cookie_buf = vec![0u8; cookie_length as usize];
+        reader.read_exact(&mut cookie_buf)?;
 
         let cipher_suite_ids_length = reader.read_u16()?;
         let num_cipher_suite_ids = cipher_suite_ids_length / 2;
-        let mut cipher_suite_ids = vec![0u16; num_cipher_suite_ids as usize];
-        for i in 0..num_cipher_suite_ids {
+        let mut cipher_suite_ids: Vec<CipherSuiteId> = vec![];
+        for _ in 0..num_cipher_suite_ids {
             let cipher_suite_id = reader.read_u16()?;
-            cipher_suite_ids[i as usize] = cipher_suite_id;
+            cipher_suite_ids.push(CipherSuiteId::from(cipher_suite_id));
         }
 
         let num_compression_method_ids = reader.read_u8()?;
-        let mut compression_method_ids = vec![0u8; num_compression_method_ids as usize];
-        for i in 0..num_compression_method_ids {
+        let mut compression_method_ids: Vec<CompressionMethodId> = vec![];
+        for _ in 0..num_compression_method_ids {
             let compression_method_id = reader.read_u8()?;
-            compression_method_ids[i as usize] = compression_method_id;
+            compression_method_ids.push(CompressionMethodId::from(compression_method_id));
         }
 
         // TODO: decode extensions
@@ -45,8 +50,8 @@ impl ClientHello {
         Ok(Self {
             version,
             random,
-            session_id,
-            cookie,
+            // session_id,
+            cookie: Cookie::try_from(cookie_buf)?,
             cipher_suite_ids,
             compression_method_ids,
         })

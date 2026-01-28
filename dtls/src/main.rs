@@ -1,10 +1,11 @@
 mod buffer;
+mod common;
 mod extension;
 mod handshake;
 mod record_header;
 
 use crate::buffer::{BufReader, BufWriter};
-use crate::handshake::context::HandshakeFlightContext;
+use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
 use crate::record_header::{ContentType, DtlsVersion, RecordHeader};
@@ -19,7 +20,7 @@ struct DtlsServer {
     certified_key: CertifiedKey<KeyPair>,
     fingerprint: GenericArray<u8, U32>,
     socket: UdpSocket,
-    handshake_flight_context: HandshakeFlightContext,
+    pub handshake_flight_context: HandshakeFlightContext,
 }
 
 impl DtlsServer {
@@ -133,10 +134,10 @@ impl DtlsServer {
         peer_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("  -> ClientHello from {}", peer_addr);
-        match self.handshake_flight_context {
+        match &self.handshake_flight_context {
             HandshakeFlightContext::Flight0 => self.send_hello_verify_request(peer_addr).await,
             HandshakeFlightContext::Flight2(context) => {
-                // TODO: send ServerHello, Certificate, ServerKeyExchange, CertificateRequest, ServerHelloDone
+                self.handle_flight2(context.clone(), peer_addr).await
             }
             _ => Err("invalid flight context".into()),
         }
@@ -150,7 +151,7 @@ impl DtlsServer {
 
         // Create HelloVerifyRequest payload
         let mut payload_writer = BufWriter::new();
-        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2), vec![]);
+        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
         hello_verify_request.encode(&mut payload_writer);
         let payload = payload_writer.buf();
 
@@ -181,7 +182,20 @@ impl DtlsServer {
 
         self.socket.send_to(&record_writer.buf(), peer_addr).await?;
 
+        self.handshake_flight_context = HandshakeFlightContext::Flight2(Flight2Context::new(
+            hello_verify_request.cookie.clone(),
+        ));
         Ok(())
+    }
+
+    async fn handle_flight2(
+        &mut self,
+        context: Flight2Context,
+        peer_addr: SocketAddr,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO: send ServerHello, Certificate, ServerKeyExchange, CertificateRequest, ServerHelloDone
+        let mut payload_writer = BufWriter::new();
+        self.socket.send_to(buf, peer_addr).await?;
     }
 }
 
