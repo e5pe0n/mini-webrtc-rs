@@ -6,6 +6,7 @@ mod record_header;
 
 use crate::buffer::{BufReader, BufWriter};
 use crate::handshake::HandshakeMessage;
+use crate::handshake::certificate::Certificate;
 use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
@@ -15,6 +16,7 @@ use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
 };
+use std::io::Read;
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
@@ -100,7 +102,7 @@ impl DtlsServer {
         );
         self.message_seq += 1;
         handshake_header.encode(&mut handshake_writer);
-        handshake_writer.write_bytes(payload);
+        handshake_writer.write_bytes(&payload);
         let handshake_message = handshake_writer.buf();
 
         // Create Record Header
@@ -112,7 +114,7 @@ impl DtlsServer {
             handshake_message.len() as u16,
         );
         record_header.encode(writer);
-        writer.write_bytes(handshake_message);
+        writer.write_bytes(&handshake_message);
     }
 
     async fn handle_message(
@@ -216,7 +218,6 @@ impl DtlsServer {
         context: Flight2Context,
         peer_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: send ServerHello, Certificate, ServerKeyExchange, CertificateRequest, ServerHelloDone
         {
             let mut writer = BufWriter::new();
 
@@ -228,7 +229,13 @@ impl DtlsServer {
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
-            // TODO: send Certificate
+            let mut writer = BufWriter::new();
+
+            let certificate = Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
+
+            self.encode_handshake_message_record(&mut writer, certificate);
+
+            self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
             // TODO: send ServerKeyExchange

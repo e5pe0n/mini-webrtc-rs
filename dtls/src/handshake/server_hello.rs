@@ -30,7 +30,7 @@ impl ServerHello {
         self.version.encode(writer);
         self.random.encode(writer);
         writer.write_u8(self.session_id.len() as u8);
-        writer.write_bytes(self.session_id.clone());
+        writer.write_bytes(&self.session_id);
         writer.write_u16(self.cipher_suite_id.into());
         writer.write_u8(self.compression_method_id.into());
         // TODO: write extensions

@@ -68,6 +68,10 @@ impl BufWriter {
         Self { buf: vec![] }
     }
 
+    pub fn buf_ref(&self) -> &Vec<u8> {
+        &self.buf
+    }
+
     pub fn buf(&self) -> Vec<u8> {
         self.buf.clone()
     }
@@ -94,7 +98,7 @@ impl BufWriter {
         self.buf.push(value as u8);
     }
 
-    pub fn write_bytes(&mut self, bytes: Vec<u8>) {
-        self.buf.extend_from_slice(&bytes);
+    pub fn write_bytes(&mut self, bytes: &Vec<u8>) {
+        self.buf.extend_from_slice(bytes);
     }
 }

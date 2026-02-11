@@ -38,6 +38,6 @@ impl Random {
             .unwrap()
             .as_secs() as u32;
         writer.write_u32(gmt_unix_time_u32);
-        writer.write_bytes(self.random_bytes.clone().into());
+        writer.write_bytes(&self.random_bytes.to_vec());
     }
 }
