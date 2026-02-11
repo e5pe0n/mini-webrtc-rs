@@ -161,7 +161,7 @@ impl DtlsServer {
                 let handshake_header = HandshakeHeader::decode(&mut reader)?;
 
                 match handshake_header.handshake_type {
-                    HandshakeType::ClientHello => {}
+                    HandshakeType::ClientHello => self.handle_client_hello(peer_addr).await?,
                     _ => println!(
                         "  -> Unknown handshake type {:?} from {}",
                         handshake_header.handshake_type, peer_addr
