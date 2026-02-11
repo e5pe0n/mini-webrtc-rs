@@ -1,3 +1,5 @@
+use crate::{buffer::BufWriter, handshake::header::HandshakeType};
+
 #[derive(Debug, Clone)]
 pub struct Cookie(pub Vec<u8>); // 20 bytes
 

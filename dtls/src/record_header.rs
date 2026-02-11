@@ -26,6 +26,7 @@ impl TryFrom<u8> for ContentType {
 const DTLS_VERSION_1_0: u16 = 0xfeff;
 const DTLS_VERSION_1_2: u16 = 0xfefd;
 
+#[derive(Debug)]
 pub struct DtlsVersion {
     major: u8,
     minor: u8,

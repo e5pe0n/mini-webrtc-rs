@@ -4,6 +4,7 @@ use crate::buffer::{BufReader, BufWriter};
 
 const RANDOM_BYTES_LENGTH: usize = 28;
 
+#[derive(Debug)]
 pub struct Random {
     gmt_unix_time: SystemTime,
     random_bytes: [u8; RANDOM_BYTES_LENGTH],

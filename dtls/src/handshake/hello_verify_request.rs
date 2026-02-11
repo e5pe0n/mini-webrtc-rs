@@ -1,9 +1,11 @@
 use crate::{
     buffer::{BufReader, BufWriter},
     common::Cookie,
+    handshake::{HandshakeMessage, header::HandshakeType},
     record_header::DtlsVersion,
 };
 
+#[derive(Debug)]
 pub struct HelloVerifyRequest {
     pub version: DtlsVersion,
     pub cookie: Cookie,
@@ -37,5 +39,15 @@ impl HelloVerifyRequest {
         for byte in &self.cookie.0 {
             writer.write_u8(*byte);
         }
+    }
+}
+
+impl HandshakeMessage for HelloVerifyRequest {
+    fn get_handshake_type(&self) -> HandshakeType {
+        HandshakeType::HelloVerifyRequest
+    }
+
+    fn encode(&self, writer: &mut BufWriter) {
+        self.encode(writer);
     }
 }

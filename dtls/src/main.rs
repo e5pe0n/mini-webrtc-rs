@@ -5,9 +5,11 @@ mod handshake;
 mod record_header;
 
 use crate::buffer::{BufReader, BufWriter};
+use crate::handshake::HandshakeMessage;
 use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
+use crate::handshake::server_hello::ServerHello;
 use crate::record_header::{ContentType, DtlsVersion, RecordHeader};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
@@ -21,6 +23,9 @@ struct DtlsServer {
     fingerprint: GenericArray<u8, U32>,
     socket: UdpSocket,
     pub handshake_flight_context: HandshakeFlightContext,
+    message_seq: u16,
+    sequence_number: u64,
+    epoch: u16,
 }
 
 impl DtlsServer {
@@ -38,6 +43,9 @@ impl DtlsServer {
             fingerprint,
             socket,
             handshake_flight_context: HandshakeFlightContext::Flight0,
+            message_seq: 0,
+            sequence_number: 0,
+            epoch: 0,
         })
     }
 
@@ -47,6 +55,11 @@ impl DtlsServer {
             .map(|b| format!("{:02X}", b))
             .collect::<Vec<_>>()
             .join(":")
+    }
+
+    fn increment_epoch(&mut self) {
+        self.epoch += 1;
+        self.sequence_number = 0;
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -65,6 +78,41 @@ impl DtlsServer {
             // Parse DTLS handshake message
             self.handle_message(&buf[..len], peer_addr).await?;
         }
+    }
+
+    fn encode_handshake_message_record(
+        &mut self,
+        writer: &mut BufWriter,
+        handshake_message: impl HandshakeMessage,
+    ) {
+        let mut payload_writer = BufWriter::new();
+        handshake_message.encode(&mut payload_writer);
+        let payload = payload_writer.buf();
+
+        // Create Handshake Header
+        let mut handshake_writer = BufWriter::new();
+        let handshake_header = HandshakeHeader::new(
+            handshake_message.get_handshake_type(),
+            payload.len() as u32,
+            self.message_seq,
+            0,
+            payload.len() as u32,
+        );
+        self.message_seq += 1;
+        handshake_header.encode(&mut handshake_writer);
+        handshake_writer.write_bytes(payload);
+        let handshake_message = handshake_writer.buf();
+
+        // Create Record Header
+        let record_header = RecordHeader::new(
+            record_header::ContentType::Handshake,
+            DtlsVersion::new(1, 2),
+            0,
+            self.sequence_number,
+            handshake_message.len() as u16,
+        );
+        record_header.encode(writer);
+        writer.write_bytes(handshake_message);
     }
 
     async fn handle_message(
@@ -149,42 +197,17 @@ impl DtlsServer {
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("  <- Sending HelloVerifyRequest to {}", peer_addr);
 
-        // Create HelloVerifyRequest payload
-        let mut payload_writer = BufWriter::new();
+        // TODO: negotiate dtls version
         let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
-        hello_verify_request.encode(&mut payload_writer);
-        let payload = payload_writer.buf();
+        let cookie = hello_verify_request.cookie.clone();
 
-        // Create Handshake Header
-        let mut handshake_writer = BufWriter::new();
-        let handshake_header = HandshakeHeader::new(
-            HandshakeType::HelloVerifyRequest,
-            payload.len() as u32,
-            0,                    // message_seq
-            0,                    // fragment_offset
-            payload.len() as u32, // fragment_length
-        );
-        handshake_header.encode(&mut handshake_writer);
-        handshake_writer.write_bytes(payload);
-        let handshake_message = handshake_writer.buf();
-
-        // Create Record Header
         let mut record_writer = BufWriter::new();
-        let record_header = RecordHeader::new(
-            record_header::ContentType::Handshake,
-            DtlsVersion::new(1, 2),
-            0, // epoch
-            0, // sequence_number
-            handshake_message.len() as u16,
-        );
-        record_header.encode(&mut record_writer);
-        record_writer.write_bytes(handshake_message);
+        self.encode_handshake_message_record(&mut record_writer, hello_verify_request);
 
         self.socket.send_to(&record_writer.buf(), peer_addr).await?;
 
-        self.handshake_flight_context = HandshakeFlightContext::Flight2(Flight2Context::new(
-            hello_verify_request.cookie.clone(),
-        ));
+        self.handshake_flight_context =
+            HandshakeFlightContext::Flight2(Flight2Context::new(cookie));
         Ok(())
     }
 
@@ -194,8 +217,29 @@ impl DtlsServer {
         peer_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: send ServerHello, Certificate, ServerKeyExchange, CertificateRequest, ServerHelloDone
-        let mut payload_writer = BufWriter::new();
-        self.socket.send_to(buf, peer_addr).await?;
+        {
+            let mut writer = BufWriter::new();
+
+            // TODO: negotiate dtls version
+            let server_hello = ServerHello::new(DtlsVersion::new(1, 2));
+
+            self.encode_handshake_message_record(&mut writer, server_hello);
+
+            self.socket.send_to(&writer.buf(), peer_addr).await?;
+        }
+        {
+            // TODO: send Certificate
+        }
+        {
+            // TODO: send ServerKeyExchange
+        }
+        {
+            // TODO: send CertificateRequest
+        }
+        {
+            // TODO: send ServerHelloDone
+        }
+        Ok(())
     }
 }
 

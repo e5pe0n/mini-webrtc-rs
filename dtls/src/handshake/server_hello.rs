@@ -1,10 +1,11 @@
 use crate::{
     buffer::BufWriter,
     common::{CipherSuiteId, CompressionMethodId, SessionId},
-    handshake::random::Random,
+    handshake::{HandshakeMessage, header::HandshakeType, random::Random},
     record_header::DtlsVersion,
 };
 
+#[derive(Debug)]
 pub struct ServerHello {
     version: DtlsVersion,
     random: Random,
@@ -33,5 +34,15 @@ impl ServerHello {
         writer.write_u16(self.cipher_suite_id.into());
         writer.write_u8(self.compression_method_id.into());
         // TODO: write extensions
+    }
+}
+
+impl HandshakeMessage for ServerHello {
+    fn get_handshake_type(&self) -> super::header::HandshakeType {
+        HandshakeType::ServerHello
+    }
+
+    fn encode(&self, writer: &mut BufWriter) {
+        self.encode(writer);
     }
 }
