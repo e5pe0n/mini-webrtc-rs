@@ -4,7 +4,7 @@ use crate::buffer::{BufReader, BufWriter};
 
 const RANDOM_BYTES_LENGTH: usize = 28;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Random {
     gmt_unix_time: SystemTime,
     random_bytes: [u8; RANDOM_BYTES_LENGTH],
@@ -39,5 +39,11 @@ impl Random {
             .as_secs() as u32;
         writer.write_u32(gmt_unix_time_u32);
         writer.write_bytes(&self.random_bytes.to_vec());
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut writer = BufWriter::new();
+        self.encode(&mut writer);
+        writer.buf()
     }
 }

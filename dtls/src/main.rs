@@ -7,10 +7,13 @@ mod record_header;
 use crate::buffer::{BufReader, BufWriter};
 use crate::handshake::HandshakeMessage;
 use crate::handshake::certificate::Certificate;
+use crate::handshake::client_hello::ClientHello;
 use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
+use crate::handshake::random::Random;
 use crate::handshake::server_hello::ServerHello;
+use crate::handshake::server_key_exchange::ServerKeyExchange;
 use crate::record_header::{ContentType, DtlsVersion, RecordHeader};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
@@ -163,7 +166,10 @@ impl DtlsServer {
                 let handshake_header = HandshakeHeader::decode(&mut reader)?;
 
                 match handshake_header.handshake_type {
-                    HandshakeType::ClientHello => self.handle_client_hello(peer_addr).await?,
+                    HandshakeType::ClientHello => {
+                        let client_hello = ClientHello::decode(&mut reader)?;
+                        self.handle_client_hello(peer_addr, client_hello).await?
+                    }
                     _ => println!(
                         "  -> Unknown handshake type {:?} from {}",
                         handshake_header.handshake_type, peer_addr
@@ -182,12 +188,14 @@ impl DtlsServer {
     async fn handle_client_hello(
         &mut self,
         peer_addr: SocketAddr,
+        client_hello: ClientHello,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("  -> ClientHello from {}", peer_addr);
         match &self.handshake_flight_context {
             HandshakeFlightContext::Flight0 => self.send_hello_verify_request(peer_addr).await,
             HandshakeFlightContext::Flight2(context) => {
-                self.handle_flight2(context.clone(), peer_addr).await
+                self.handle_flight2(context.clone(), peer_addr, client_hello)
+                    .await
             }
             _ => Err("invalid flight context".into()),
         }
@@ -217,28 +225,32 @@ impl DtlsServer {
         &mut self,
         context: Flight2Context,
         peer_addr: SocketAddr,
+        client_hello: ClientHello,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let client_random = client_hello.random;
+        let server_random = Random::new();
         {
+            // ServerHello
             let mut writer = BufWriter::new();
-
             // TODO: negotiate dtls version
-            let server_hello = ServerHello::new(DtlsVersion::new(1, 2));
-
+            let server_hello = ServerHello::new(DtlsVersion::new(1, 2), server_random.clone());
             self.encode_handshake_message_record(&mut writer, server_hello);
-
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
+            // Certificate
             let mut writer = BufWriter::new();
-
             let certificate = Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
-
             self.encode_handshake_message_record(&mut writer, certificate);
-
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
-            // TODO: send ServerKeyExchange
+            // ServerKeyExchange
+            let mut writer = BufWriter::new();
+            let server_key_exchange =
+                ServerKeyExchange::new(&self.certified_key, &client_random, &server_random);
+            self.encode_handshake_message_record(&mut writer, server_key_exchange);
+            self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
             // TODO: send CertificateRequest

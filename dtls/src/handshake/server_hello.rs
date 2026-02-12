@@ -7,19 +7,19 @@ use crate::{
 
 #[derive(Debug)]
 pub struct ServerHello {
-    version: DtlsVersion,
-    random: Random,
-    session_id: SessionId,
-    cipher_suite_id: CipherSuiteId,
-    compression_method_id: CompressionMethodId,
+    pub version: DtlsVersion,
+    pub random: Random,
+    pub session_id: SessionId,
+    pub cipher_suite_id: CipherSuiteId,
+    pub compression_method_id: CompressionMethodId,
     // extensions: Vec<Extension>,
 }
 
 impl ServerHello {
-    pub fn new(version: DtlsVersion) -> Self {
+    pub fn new(version: DtlsVersion, random: Random) -> Self {
         Self {
             version,
-            random: Random::new(),
+            random,
             session_id: vec![],
             cipher_suite_id: CipherSuiteId::TlsEcdheEcdheWithAes128GcmSha256,
             compression_method_id: CompressionMethodId::Null,

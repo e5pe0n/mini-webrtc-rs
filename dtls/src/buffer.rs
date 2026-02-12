@@ -98,7 +98,7 @@ impl BufWriter {
         self.buf.push(value as u8);
     }
 
-    pub fn write_bytes(&mut self, bytes: &Vec<u8>) {
+    pub fn write_bytes(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
 }

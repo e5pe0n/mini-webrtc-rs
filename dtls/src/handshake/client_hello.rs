@@ -5,13 +5,13 @@ use crate::{
     record_header::DtlsVersion,
 };
 
-struct ClientHello {
-    version: DtlsVersion,
-    random: Random,
+pub struct ClientHello {
+    pub version: DtlsVersion,
+    pub random: Random,
     // session_id: SessionId,
-    cookie: Cookie,
-    cipher_suite_ids: Vec<CipherSuiteId>,
-    compression_method_ids: Vec<CompressionMethodId>,
+    pub cookie: Cookie,
+    pub cipher_suite_ids: Vec<CipherSuiteId>,
+    pub compression_method_ids: Vec<CompressionMethodId>,
     // extensions: Vec<Extension>,
 }
 

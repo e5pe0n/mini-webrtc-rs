@@ -7,6 +7,7 @@ pub mod header;
 pub mod hello_verify_request;
 pub mod random;
 pub mod server_hello;
+pub mod server_key_exchange;
 
 pub trait HandshakeMessage {
     fn get_handshake_type(&self) -> HandshakeType;
