@@ -7,6 +7,7 @@ mod record_header;
 use crate::buffer::{BufReader, BufWriter};
 use crate::handshake::HandshakeMessage;
 use crate::handshake::certificate::Certificate;
+use crate::handshake::certificate_request::CertificateRequest;
 use crate::handshake::client_hello::ClientHello;
 use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
@@ -253,7 +254,10 @@ impl DtlsServer {
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
-            // TODO: send CertificateRequest
+            let mut writer = BufWriter::new();
+            let certificate_request = CertificateRequest::new();
+            self.encode_handshake_message_record(&mut writer, certificate_request);
+            self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
             // TODO: send ServerHelloDone

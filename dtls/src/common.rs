@@ -1,4 +1,4 @@
-use crate::{buffer::BufWriter, handshake::header::HandshakeType};
+use crate::buffer::BufWriter;
 
 #[derive(Debug, Clone)]
 pub struct Cookie(pub Vec<u8>); // 20 bytes
@@ -70,7 +70,7 @@ impl From<CompressionMethodId> for u8 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ECCurveType {
     // https://datatracker.ietf.org/doc/html/rfc4492#section-5.4
     NamedCurve = 0x03,
@@ -78,13 +78,11 @@ pub enum ECCurveType {
 
 impl From<ECCurveType> for u8 {
     fn from(value: ECCurveType) -> Self {
-        match value {
-            ECCurveType::NamedCurve => ECCurveType::NamedCurve as u8,
-        }
+        value as u8
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ECCurve {
     Unsupported = 0x0000,
     CurveX25519 = 0x001d,
@@ -92,23 +90,56 @@ pub enum ECCurve {
 
 impl From<ECCurve> for u16 {
     fn from(value: ECCurve) -> Self {
-        match value {
-            ECCurve::CurveX25519 => ECCurve::CurveX25519 as u16,
-            ECCurve::Unsupported => ECCurve::Unsupported as u16,
-        }
+        value as u16
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum HashAlgorithm {
+    // https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4.1
+    Sha256 = 4,
+    // Unsupported,
+}
+
+impl From<HashAlgorithm> for u8 {
+    fn from(value: HashAlgorithm) -> Self {
+        value as u8
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SignatureAlgorithm {
+    // https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4.1
+    Ecdsa = 3,
+    // Unsupported,
+}
+
+impl From<SignatureAlgorithm> for u8 {
+    fn from(value: SignatureAlgorithm) -> Self {
+        value as u8
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CertificateType {
+    Ecdsa = 64,
+}
+
+impl From<CertificateType> for u8 {
+    fn from(value: CertificateType) -> Self {
+        value as u8
     }
 }
 
 #[derive(Debug)]
-pub enum HashAlgorithm {
-    // https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4.1
-    Sha256 = 4,
-    Unsupported,
+pub struct AlgoPair {
+    pub hash: HashAlgorithm,
+    pub signature: SignatureAlgorithm,
 }
 
-#[derive(Debug)]
-pub enum SignatureAlgorithm {
-    // https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4.1
-    Ecdsa = 3,
-    Unsupported,
+impl AlgoPair {
+    pub fn encode(&self, writer: &mut BufWriter) {
+        writer.write_u8(self.hash.into());
+        writer.write_u8(self.signature.into());
+    }
 }

@@ -3,15 +3,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     buffer::BufWriter,
-    common::{ECCurve, ECCurveType, HashAlgorithm, SignatureAlgorithm},
+    common::{AlgoPair, ECCurve, ECCurveType, HashAlgorithm, SignatureAlgorithm},
     handshake::{HandshakeMessage, header::HandshakeType, random::Random},
 };
-
-#[derive(Debug)]
-struct AlgoPair {
-    hash: HashAlgorithm,
-    signature: SignatureAlgorithm,
-}
 
 #[derive(Debug)]
 pub struct ServerKeyExchange {
@@ -43,11 +37,11 @@ impl ServerKeyExchange {
         message_writer.write_u8(public_key.len() as u8);
         message_writer.write_bytes(public_key);
 
-        // TODO: generate key signature
         let message_buf = message_writer.buf_ref();
         let hashed = Sha256::digest(message_buf);
         let signature = private_key.sign(&hashed).unwrap();
 
+        // TODO: support others
         Self {
             curve_type: ECCurveType::NamedCurve,
             curve: ECCurve::CurveX25519,
@@ -60,7 +54,15 @@ impl ServerKeyExchange {
         }
     }
 
-    pub fn encode(&self, writer: &mut BufWriter) {}
+    pub fn encode(&self, writer: &mut BufWriter) {
+        writer.write_u8(self.curve_type.into());
+        writer.write_u16(self.curve.into());
+        writer.write_u8(self.public_key.len() as u8);
+        writer.write_bytes(&self.public_key);
+        self.algo_pair.encode(writer);
+        writer.write_u16(self.signature.len() as u16);
+        writer.write_bytes(&self.signature);
+    }
 }
 
 impl HandshakeMessage for ServerKeyExchange {
