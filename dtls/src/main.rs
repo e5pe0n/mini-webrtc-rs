@@ -14,6 +14,7 @@ use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
 use crate::handshake::random::Random;
 use crate::handshake::server_hello::ServerHello;
+use crate::handshake::server_hello_done::ServerHelloDone;
 use crate::handshake::server_key_exchange::ServerKeyExchange;
 use crate::record_header::{ContentType, DtlsVersion, RecordHeader};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
@@ -261,6 +262,10 @@ impl DtlsServer {
         }
         {
             // TODO: send ServerHelloDone
+            let mut writer = BufWriter::new();
+            let server_hello_done = ServerHelloDone::new();
+            self.encode_handshake_message_record(&mut writer, server_hello_done);
+            self.socket.send_to(writer.buf_ref(), peer_addr).await?;
         }
         Ok(())
     }
