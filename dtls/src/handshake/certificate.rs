@@ -1,5 +1,5 @@
 use crate::{
-    buffer::BufWriter,
+    buffer::{BufReader, BufWriter},
     handshake::{HandshakeMessage, header::HandshakeType},
 };
 
@@ -23,6 +23,18 @@ impl Certificate {
         let buf = certs_writer.buf_ref();
         writer.write_u24(buf.len() as u32);
         writer.write_bytes(buf);
+    }
+
+    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+        let length = reader.read_u24()?;
+        let mut certificates: Vec<Vec<u8>> = vec![];
+        for _ in 0..length {
+            let cert_len = reader.read_u24()?;
+            let mut cert: Vec<u8> = vec![0u8; cert_len as usize];
+            reader.read_exact(&mut cert);
+            certificates.push(cert);
+        }
+        Ok(Self { certificates })
     }
 }
 

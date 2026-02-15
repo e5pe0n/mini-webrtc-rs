@@ -172,6 +172,11 @@ impl DtlsServer {
                         let client_hello = ClientHello::decode(&mut reader)?;
                         self.handle_client_hello(peer_addr, client_hello).await?
                     }
+                    HandshakeType::Certificate => {
+                        let client_certificate = Certificate::decode(&mut reader)?;
+                        self.handle_client_certificate(peer_addr, client_certificate)
+                            .await?;
+                    }
                     _ => println!(
                         "  -> Unknown handshake type {:?} from {}",
                         handshake_header.handshake_type, peer_addr
@@ -240,7 +245,7 @@ impl DtlsServer {
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
-            // Certificate
+            // Server Certificate
             let mut writer = BufWriter::new();
             let certificate = Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
             self.encode_handshake_message_record(&mut writer, certificate);
@@ -267,6 +272,18 @@ impl DtlsServer {
             self.encode_handshake_message_record(&mut writer, server_hello_done);
             self.socket.send_to(writer.buf_ref(), peer_addr).await?;
         }
+        Ok(())
+    }
+
+    async fn handle_client_certificate(
+        &mut self,
+        peer_addr: SocketAddr,
+        client_certificate: Certificate,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        println!("  -> ClientCertificate from {}", peer_addr);
+
+        // TODO: get fingerprint of client certificate
+        // TODO: confirm the fingerprint hash matches the one in sdp
         Ok(())
     }
 }
