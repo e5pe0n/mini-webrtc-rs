@@ -1,3 +1,5 @@
+use x25519_dalek::{EphemeralSecret, PublicKey};
+
 use crate::buffer::BufWriter;
 
 #[derive(Debug, Clone)]
@@ -142,4 +144,16 @@ impl AlgoPair {
         writer.write_u8(self.hash.into());
         writer.write_u8(self.signature.into());
     }
+}
+
+pub struct CurveKeyPair {
+    pub public_key: PublicKey,
+    pub secret: EphemeralSecret,
+}
+
+fn generate_curve_key_pair() -> CurveKeyPair {
+    // generate X25519 key pair
+    let secret = EphemeralSecret::random();
+    let public_key = PublicKey::from(&secret);
+    CurveKeyPair { public_key, secret }
 }
