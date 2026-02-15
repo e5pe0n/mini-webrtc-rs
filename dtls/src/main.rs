@@ -5,6 +5,7 @@ mod handshake;
 mod record_header;
 
 use crate::buffer::{BufReader, BufWriter};
+use crate::common::generate_curve_key_pair;
 use crate::handshake::HandshakeMessage;
 use crate::handshake::certificate::Certificate;
 use crate::handshake::certificate_request::CertificateRequest;
@@ -260,9 +261,13 @@ impl DtlsServer {
         {
             // ServerKeyExchange
             let mut writer = BufWriter::new();
-            // TODO: replace certified key with X25519 public key
-            let server_key_exchange =
-                ServerKeyExchange::new(&self.certified_key, &client_random, &server_random);
+            let curve_key_pair = generate_curve_key_pair();
+            let server_key_exchange = ServerKeyExchange::new(
+                curve_key_pair.public_key,
+                &self.certified_key,
+                &client_random,
+                &server_random,
+            );
             self.encode_handshake_message_record(&mut writer, server_key_exchange);
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
