@@ -292,6 +292,20 @@ impl DtlsServer {
         // TODO: confirm the fingerprint hash matches the one in sdp
         Ok(())
     }
+
+    async fn handle_client_key_exchange(
+        &mut self,
+        peer_addr: SocketAddr,
+        client_key_exchange: ClientKeyExchange,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        println!("  -> ClientKeyExchange from {}", peer_addr);
+
+        // TODO: init cipher suite
+        // - TODO: generate pre master secret
+        // - TODO: generate master secret
+        // - TODO: init GCM
+        Ok(())
+    }
 }
 
 #[tokio::main]

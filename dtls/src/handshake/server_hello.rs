@@ -21,7 +21,7 @@ impl ServerHello {
             version,
             random,
             session_id: vec![],
-            cipher_suite_id: CipherSuiteId::TlsEcdheEcdheWithAes128GcmSha256,
+            cipher_suite_id: CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256,
             compression_method_id: CompressionMethodId::Null,
         }
     }

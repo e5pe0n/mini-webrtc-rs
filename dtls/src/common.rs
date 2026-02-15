@@ -30,14 +30,14 @@ pub type SessionId = Vec<u8>;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum CipherSuiteId {
-    TlsEcdheEcdheWithAes128GcmSha256 = 0xc02b,
+    TlsEcdheEcdsaWithAes128GcmSha256 = 0xc02b,
     Unsupported,
 }
 
 impl From<u16> for CipherSuiteId {
     fn from(value: u16) -> Self {
         match value {
-            0xc02b => CipherSuiteId::TlsEcdheEcdheWithAes128GcmSha256,
+            0xc02b => CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256,
             _ => CipherSuiteId::Unsupported,
         }
     }
