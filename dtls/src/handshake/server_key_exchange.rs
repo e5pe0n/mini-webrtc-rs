@@ -9,6 +9,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct ServerKeyExchange {
+    // https://datatracker.ietf.org/doc/html/rfc8422#autoid-18
     // https://datatracker.ietf.org/doc/html/rfc4492#section-5.4
     // ServerECDHParams
     curve_type: ECCurveType,

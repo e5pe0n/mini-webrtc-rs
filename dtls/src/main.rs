@@ -9,6 +9,7 @@ use crate::handshake::HandshakeMessage;
 use crate::handshake::certificate::Certificate;
 use crate::handshake::certificate_request::CertificateRequest;
 use crate::handshake::client_hello::ClientHello;
+use crate::handshake::client_key_exchange::ClientKeyExchange;
 use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
@@ -175,6 +176,11 @@ impl DtlsServer {
                     HandshakeType::Certificate => {
                         let client_certificate = Certificate::decode(&mut reader)?;
                         self.handle_client_certificate(peer_addr, client_certificate)
+                            .await?;
+                    }
+                    HandshakeType::ClientKeyExchange => {
+                        let client_key_exchange = ClientKeyExchange::decode(&mut reader)?;
+                        self.handle_client_key_exchange(peer_addr, client_key_exchange)
                             .await?;
                     }
                     _ => println!(

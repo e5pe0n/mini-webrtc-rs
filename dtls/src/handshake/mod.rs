@@ -3,6 +3,7 @@ use crate::{buffer::BufWriter, handshake::header::HandshakeType};
 pub mod certificate;
 pub mod certificate_request;
 pub mod client_hello;
+pub mod client_key_exchange;
 pub mod context;
 pub mod header;
 pub mod hello_verify_request;
