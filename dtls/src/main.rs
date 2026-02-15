@@ -260,19 +260,21 @@ impl DtlsServer {
         {
             // ServerKeyExchange
             let mut writer = BufWriter::new();
+            // TODO: replace certified key with X25519 public key
             let server_key_exchange =
                 ServerKeyExchange::new(&self.certified_key, &client_random, &server_random);
             self.encode_handshake_message_record(&mut writer, server_key_exchange);
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
+            // Certificate Request
             let mut writer = BufWriter::new();
             let certificate_request = CertificateRequest::new();
             self.encode_handshake_message_record(&mut writer, certificate_request);
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
         {
-            // TODO: send ServerHelloDone
+            // ServerHelloDone
             let mut writer = BufWriter::new();
             let server_hello_done = ServerHelloDone::new();
             self.encode_handshake_message_record(&mut writer, server_hello_done);
