@@ -85,7 +85,7 @@ impl From<ECCurveType> for u8 {
 #[derive(Debug, Clone, Copy)]
 pub enum ECCurve {
     Unsupported = 0x0000,
-    CurveX25519 = 0x001d,
+    X25519 = 0x001d,
 }
 
 impl From<ECCurve> for u16 {

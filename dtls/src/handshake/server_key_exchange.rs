@@ -34,7 +34,7 @@ impl ServerKeyExchange {
         message_writer.write_bytes(&client_random.to_bytes());
         message_writer.write_bytes(&server_random.to_bytes());
         message_writer.write_u8(ECCurveType::NamedCurve.into());
-        message_writer.write_u16(ECCurve::CurveX25519.into());
+        message_writer.write_u16(ECCurve::X25519.into());
         message_writer.write_u8(public_key.len() as u8);
         message_writer.write_bytes(public_key);
 
@@ -45,7 +45,7 @@ impl ServerKeyExchange {
         // TODO: support others
         Self {
             curve_type: ECCurveType::NamedCurve,
-            curve: ECCurve::CurveX25519,
+            curve: ECCurve::X25519,
             public_key: public_key.to_vec(),
             algo_pair: AlgoPair {
                 hash: HashAlgorithm::Sha256,
