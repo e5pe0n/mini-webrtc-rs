@@ -1,5 +1,6 @@
 mod buffer;
 mod common;
+mod crypto;
 mod extension;
 mod handshake;
 mod record_header;
@@ -310,7 +311,12 @@ impl DtlsServer {
 
         let client_public_key = client_key_exchange.public_key;
 
-        match &self.handshake_flight_context {
+        // EphemeralSecret doesn't implement Copy and Clone
+        // so we need to take the ownership.
+        match std::mem::replace(
+            &mut self.handshake_flight_context,
+            HandshakeFlightContext::Flight0,
+        ) {
             HandshakeFlightContext::Flight6(context) => {
                 // TODO: init cipher suite
                 // - TODO: generate pre master secret

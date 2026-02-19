@@ -1,6 +1,6 @@
 use x25519_dalek::EphemeralSecret;
 
-use crate::common::Cookie;
+use crate::{common::Cookie, handshake::random::Random};
 
 pub enum HandshakeFlightContext {
     Flight0,
@@ -21,10 +21,6 @@ impl Flight4Context {
 
 pub struct Flight6Context {
     pub secret: EphemeralSecret,
-}
-
-impl Flight6Context {
-    pub fn new(secret: EphemeralSecret) -> Flight6Context {
-        Self { secret }
-    }
+    pub client_random: Random,
+    pub server_random: Random,
 }
