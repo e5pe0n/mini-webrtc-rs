@@ -11,7 +11,7 @@ use crate::handshake::certificate::Certificate;
 use crate::handshake::certificate_request::CertificateRequest;
 use crate::handshake::client_hello::ClientHello;
 use crate::handshake::client_key_exchange::ClientKeyExchange;
-use crate::handshake::context::{Flight2Context, HandshakeFlightContext};
+use crate::handshake::context::{Flight4Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
 use crate::handshake::random::Random;
@@ -26,6 +26,7 @@ use sha2::{
 use std::io::Read;
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
+use x25519_dalek::{EphemeralSecret, PublicKey};
 
 struct DtlsServer {
     certified_key: CertifiedKey<KeyPair>,
@@ -207,8 +208,8 @@ impl DtlsServer {
         println!("  -> ClientHello from {}", peer_addr);
         match &self.handshake_flight_context {
             HandshakeFlightContext::Flight0 => self.send_hello_verify_request(peer_addr).await,
-            HandshakeFlightContext::Flight2(context) => {
-                self.handle_flight2(context.clone(), peer_addr, client_hello)
+            HandshakeFlightContext::Flight4(context) => {
+                self.handle_flight4(context.clone(), peer_addr, client_hello)
                     .await
             }
             _ => Err("invalid flight context".into()),
@@ -231,13 +232,13 @@ impl DtlsServer {
         self.socket.send_to(&record_writer.buf(), peer_addr).await?;
 
         self.handshake_flight_context =
-            HandshakeFlightContext::Flight2(Flight2Context::new(cookie));
+            HandshakeFlightContext::Flight4(Flight4Context::new(cookie));
         Ok(())
     }
 
-    async fn handle_flight2(
+    async fn handle_flight4(
         &mut self,
-        context: Flight2Context,
+        context: Flight4Context,
         peer_addr: SocketAddr,
         client_hello: ClientHello,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -307,11 +308,22 @@ impl DtlsServer {
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("  -> ClientKeyExchange from {}", peer_addr);
 
-        // TODO: init cipher suite
-        // - TODO: generate pre master secret
-        // - TODO: generate master secret
-        // - TODO: init GCM
-        Ok(())
+        let client_public_key = client_key_exchange.public_key;
+
+        match &self.handshake_flight_context {
+            HandshakeFlightContext::Flight6(context) => {
+                // TODO: init cipher suite
+                // - TODO: generate pre master secret
+                let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
+                let pre_master_secret = context
+                    .secret
+                    .diffie_hellman(&PublicKey::from(client_public_key));
+                // - TODO: generate master secret
+                // - TODO: init GCM
+                Ok(())
+            }
+            _ => Err("invalid flight context".into()),
+        }
     }
 }
 
