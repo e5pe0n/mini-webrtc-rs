@@ -136,21 +136,20 @@ impl DtlsServer {
             return Ok(());
         }
 
-        // Check if this is a DTLS message (content type byte)
-        let content_type = data[0];
+        let mut reader = BufReader::new(data);
+        let record_header = RecordHeader::decode(&mut reader)?;
 
-        match content_type {
-            20 => println!("Received ChangeCipherSpec from {}", peer_addr),
-            21 => println!("Received Alert from {}", peer_addr),
-            22 => {
-                println!("Received Handshake from {}", peer_addr);
-                self.handle_handshake(data, peer_addr).await?;
+        match record_header.content_type {
+            ContentType::ChangeCipherSpec => {
+                println!("Received ChangeCipherSpec from {}", peer_addr)
             }
-            23 => println!("Received ApplicationData from {}", peer_addr),
-            _ => println!(
-                "Received unknown message type {} from {}",
-                content_type, peer_addr
-            ),
+            ContentType::Alert => println!("Received Alert from {}", peer_addr),
+            ContentType::Handshake => {
+                println!("Received Handshake from {}", peer_addr);
+                self.handle_handshake(&mut reader, record_header, peer_addr)
+                    .await?;
+            }
+            ContentType::ApplicationData => println!("Received ApplicationData from {}", peer_addr),
         }
 
         Ok(())
@@ -158,197 +157,152 @@ impl DtlsServer {
 
     async fn handle_handshake(
         &mut self,
-        data: &[u8],
+        reader: &'_ mut BufReader<'_>,
+        record_header: RecordHeader,
         peer_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if data.len() < 13 {
-            return Ok(());
-        }
+        let handshake_header = HandshakeHeader::decode(reader)?;
 
-        let mut reader = BufReader::new(data);
-        let record_header = RecordHeader::decode(&mut reader)?;
+        match handshake_header.handshake_type {
+            HandshakeType::ClientHello => {
+                let client_hello = ClientHello::decode(reader)?;
+                println!("  -> ClientHello from {}", peer_addr);
+                match &self.handshake_flight_context {
+                    HandshakeFlightContext::Flight0 => {
+                        println!("  <- Sending HelloVerifyRequest to {}", peer_addr);
 
-        match record_header.content_type {
-            ContentType::Handshake => {
-                let handshake_header = HandshakeHeader::decode(&mut reader)?;
+                        // TODO: negotiate dtls version
+                        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
+                        let cookie = hello_verify_request.cookie.clone();
 
-                match handshake_header.handshake_type {
-                    HandshakeType::ClientHello => {
-                        let client_hello = ClientHello::decode(&mut reader)?;
-                        self.handle_client_hello(peer_addr, client_hello).await?
+                        let mut record_writer = BufWriter::new();
+                        self.encode_handshake_message_record(
+                            &mut record_writer,
+                            hello_verify_request,
+                        );
+
+                        self.socket.send_to(&record_writer.buf(), peer_addr).await?;
+
+                        self.handshake_flight_context =
+                            HandshakeFlightContext::Flight4(Flight4Context::new(cookie));
                     }
-                    HandshakeType::Certificate => {
-                        let client_certificate = Certificate::decode(&mut reader)?;
-                        self.handle_client_certificate(peer_addr, client_certificate)
-                            .await?;
-                    }
-                    HandshakeType::ClientKeyExchange => {
-                        let client_key_exchange = ClientKeyExchange::decode(&mut reader)?;
-                        self.handle_client_key_exchange(peer_addr, client_key_exchange)
-                            .await?;
+                    HandshakeFlightContext::Flight4(context) => {
+                        let client_random = client_hello.random;
+                        let server_random = Random::new();
+                        {
+                            // ServerHello
+                            let mut writer = BufWriter::new();
+                            // TODO: negotiate dtls version
+                            let server_hello =
+                                ServerHello::new(DtlsVersion::new(1, 2), server_random.clone());
+                            self.encode_handshake_message_record(&mut writer, server_hello);
+                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                        }
+                        {
+                            // Server Certificate
+                            let mut writer = BufWriter::new();
+                            let certificate =
+                                Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
+                            self.encode_handshake_message_record(&mut writer, certificate);
+                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                        }
+                        let ephemeral_secret = {
+                            // ServerKeyExchange
+                            let mut writer = BufWriter::new();
+                            let curve_key_pair = generate_curve_key_pair();
+                            let server_key_exchange = ServerKeyExchange::new(
+                                curve_key_pair.public_key,
+                                &self.certified_key,
+                                &client_random,
+                                &server_random,
+                            );
+                            self.encode_handshake_message_record(&mut writer, server_key_exchange);
+                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                            curve_key_pair.secret
+                        };
+                        {
+                            // Certificate Request
+                            let mut writer = BufWriter::new();
+                            let certificate_request = CertificateRequest::new();
+                            self.encode_handshake_message_record(&mut writer, certificate_request);
+                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                        }
+                        {
+                            // ServerHelloDone
+                            let mut writer = BufWriter::new();
+                            let server_hello_done = ServerHelloDone::new();
+                            self.encode_handshake_message_record(&mut writer, server_hello_done);
+                            self.socket.send_to(writer.buf_ref(), peer_addr).await?;
+                        }
+                        let context = Flight6Context {
+                            ephemeral_secret,
+                            client_random,
+                            server_random,
+                        };
                     }
                     _ => println!(
-                        "  -> Unknown handshake type {:?} from {}",
-                        handshake_header.handshake_type, peer_addr
+                        "invalid flight for ClientHello; {:?}",
+                        &self.handshake_flight_context
                     ),
                 }
+            }
+            HandshakeType::Certificate => {
+                let client_certificate = Certificate::decode(reader)?;
+                // TODO: get fingerprint of client certificate
+                // TODO: confirm the fingerprint hash matches the one in sdp
+            }
+            HandshakeType::ClientKeyExchange => {
+                println!("  -> ClientKeyExchange from {}", peer_addr);
+                let client_key_exchange = ClientKeyExchange::decode(reader)?;
+                let client_public_key = client_key_exchange.public_key;
 
-                Ok(())
+                // EphemeralSecret doesn't implement Copy and Clone
+                // so we need to take the ownership.
+                match std::mem::replace(
+                    &mut self.handshake_flight_context,
+                    HandshakeFlightContext::Flight0,
+                ) {
+                    HandshakeFlightContext::Flight6(context) => {
+                        let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
+                        let pre_master_secret = context
+                            .ephemeral_secret
+                            .diffie_hellman(&PublicKey::from(client_public_key));
+                        let master_secret = generate_master_secret(
+                            pre_master_secret,
+                            &context.client_random,
+                            &context.server_random,
+                        );
+                        let encryption_keys = generate_encryption_keys(
+                            &master_secret,
+                            &context.client_random,
+                            &context.server_random,
+                        );
+                        let gcm = Gcm::new(
+                            &encryption_keys.server_write_key,
+                            &encryption_keys.server_write_iv,
+                            &encryption_keys.client_write_key,
+                            &encryption_keys.client_write_iv,
+                        );
+                    }
+                    _ => println!(
+                        "invalid flight for ClientKeyExchange ; {:?}",
+                        &self.handshake_flight_context
+                    ),
+                }
             }
-            _ => {
-                println!("invalid content type");
-                Err("invalid content type".into())
+            HandshakeType::CertificateVerify => {
+                // TODO
             }
+            HandshakeType::Finished {
+                // TODO
+            }
+            _ => println!(
+                "  -> Unknown handshake type {:?} from {}",
+                handshake_header.handshake_type, peer_addr
+            ),
         }
-    }
 
-    async fn handle_client_hello(
-        &mut self,
-        peer_addr: SocketAddr,
-        client_hello: ClientHello,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("  -> ClientHello from {}", peer_addr);
-        match &self.handshake_flight_context {
-            HandshakeFlightContext::Flight0 => self.send_hello_verify_request(peer_addr).await,
-            HandshakeFlightContext::Flight4(context) => {
-                self.handle_flight4(context.clone(), peer_addr, client_hello)
-                    .await
-            }
-            _ => Err("invalid flight context".into()),
-        }
-    }
-
-    async fn send_hello_verify_request(
-        &mut self,
-        peer_addr: SocketAddr,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("  <- Sending HelloVerifyRequest to {}", peer_addr);
-
-        // TODO: negotiate dtls version
-        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
-        let cookie = hello_verify_request.cookie.clone();
-
-        let mut record_writer = BufWriter::new();
-        self.encode_handshake_message_record(&mut record_writer, hello_verify_request);
-
-        self.socket.send_to(&record_writer.buf(), peer_addr).await?;
-
-        self.handshake_flight_context =
-            HandshakeFlightContext::Flight4(Flight4Context::new(cookie));
         Ok(())
-    }
-
-    async fn handle_flight4(
-        &mut self,
-        context: Flight4Context,
-        peer_addr: SocketAddr,
-        client_hello: ClientHello,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_random = client_hello.random;
-        let server_random = Random::new();
-        {
-            // ServerHello
-            let mut writer = BufWriter::new();
-            // TODO: negotiate dtls version
-            let server_hello = ServerHello::new(DtlsVersion::new(1, 2), server_random.clone());
-            self.encode_handshake_message_record(&mut writer, server_hello);
-            self.socket.send_to(&writer.buf(), peer_addr).await?;
-        }
-        {
-            // Server Certificate
-            let mut writer = BufWriter::new();
-            let certificate = Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
-            self.encode_handshake_message_record(&mut writer, certificate);
-            self.socket.send_to(&writer.buf(), peer_addr).await?;
-        }
-        let ephemeral_secret = {
-            // ServerKeyExchange
-            let mut writer = BufWriter::new();
-            let curve_key_pair = generate_curve_key_pair();
-            let server_key_exchange = ServerKeyExchange::new(
-                curve_key_pair.public_key,
-                &self.certified_key,
-                &client_random,
-                &server_random,
-            );
-            self.encode_handshake_message_record(&mut writer, server_key_exchange);
-            self.socket.send_to(&writer.buf(), peer_addr).await?;
-            curve_key_pair.secret
-        };
-        {
-            // Certificate Request
-            let mut writer = BufWriter::new();
-            let certificate_request = CertificateRequest::new();
-            self.encode_handshake_message_record(&mut writer, certificate_request);
-            self.socket.send_to(&writer.buf(), peer_addr).await?;
-        }
-        {
-            // ServerHelloDone
-            let mut writer = BufWriter::new();
-            let server_hello_done = ServerHelloDone::new();
-            self.encode_handshake_message_record(&mut writer, server_hello_done);
-            self.socket.send_to(writer.buf_ref(), peer_addr).await?;
-        }
-        let context = Flight6Context {
-            ephemeral_secret,
-            client_random,
-            server_random,
-        };
-        Ok(())
-    }
-
-    async fn handle_client_certificate(
-        &mut self,
-        peer_addr: SocketAddr,
-        client_certificate: Certificate,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("  -> ClientCertificate from {}", peer_addr);
-
-        // TODO: get fingerprint of client certificate
-        // TODO: confirm the fingerprint hash matches the one in sdp
-        Ok(())
-    }
-
-    async fn handle_client_key_exchange(
-        &mut self,
-        peer_addr: SocketAddr,
-        client_key_exchange: ClientKeyExchange,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("  -> ClientKeyExchange from {}", peer_addr);
-
-        let client_public_key = client_key_exchange.public_key;
-
-        // EphemeralSecret doesn't implement Copy and Clone
-        // so we need to take the ownership.
-        match std::mem::replace(
-            &mut self.handshake_flight_context,
-            HandshakeFlightContext::Flight0,
-        ) {
-            HandshakeFlightContext::Flight6(context) => {
-                let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
-                let pre_master_secret = context
-                    .ephemeral_secret
-                    .diffie_hellman(&PublicKey::from(client_public_key));
-                let master_secret = generate_master_secret(
-                    pre_master_secret,
-                    &context.client_random,
-                    &context.server_random,
-                );
-                let encryption_keys = generate_encryption_keys(
-                    &master_secret,
-                    &context.client_random,
-                    &context.server_random,
-                );
-                let gcm = Gcm::new(
-                    &encryption_keys.server_write_key,
-                    &encryption_keys.server_write_iv,
-                    &encryption_keys.client_write_key,
-                    &encryption_keys.client_write_iv,
-                );
-                Ok(())
-            }
-            _ => Err("invalid flight context".into()),
-        }
     }
 }
 
