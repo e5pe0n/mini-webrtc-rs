@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aes-gcm = "0.10.3"
 hmac = "0.12.1"
 rand = { version= "0.9.2", features = ["thread_rng"] }
 rcgen = "0.14.6"

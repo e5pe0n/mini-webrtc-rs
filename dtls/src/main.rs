@@ -7,7 +7,7 @@ mod record_header;
 
 use crate::buffer::{BufReader, BufWriter};
 use crate::common::generate_curve_key_pair;
-use crate::crypto::generate_master_secret;
+use crate::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
 use crate::handshake::HandshakeMessage;
 use crate::handshake::certificate::Certificate;
 use crate::handshake::certificate_request::CertificateRequest;
@@ -325,8 +325,6 @@ impl DtlsServer {
             HandshakeFlightContext::Flight0,
         ) {
             HandshakeFlightContext::Flight6(context) => {
-                // TODO: init cipher suite
-                // - TODO: generate pre master secret
                 let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
                 let pre_master_secret = context
                     .ephemeral_secret
@@ -336,7 +334,17 @@ impl DtlsServer {
                     &context.client_random,
                     &context.server_random,
                 );
-                // - TODO: init GCM
+                let encryption_keys = generate_encryption_keys(
+                    &master_secret,
+                    &context.client_random,
+                    &context.server_random,
+                );
+                let gcm = Gcm::new(
+                    &encryption_keys.server_write_key,
+                    &encryption_keys.server_write_iv,
+                    &encryption_keys.client_write_key,
+                    &encryption_keys.client_write_iv,
+                );
                 Ok(())
             }
             _ => Err("invalid flight context".into()),
