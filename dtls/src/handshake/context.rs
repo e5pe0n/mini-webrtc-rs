@@ -20,7 +20,7 @@ impl Flight4Context {
 }
 
 pub struct Flight6Context {
-    pub secret: EphemeralSecret,
+    pub ephemeral_secret: EphemeralSecret,
     pub client_random: Random,
     pub server_random: Random,
 }

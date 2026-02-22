@@ -7,12 +7,13 @@ mod record_header;
 
 use crate::buffer::{BufReader, BufWriter};
 use crate::common::generate_curve_key_pair;
+use crate::crypto::generate_master_secret;
 use crate::handshake::HandshakeMessage;
 use crate::handshake::certificate::Certificate;
 use crate::handshake::certificate_request::CertificateRequest;
 use crate::handshake::client_hello::ClientHello;
 use crate::handshake::client_key_exchange::ClientKeyExchange;
-use crate::handshake::context::{Flight4Context, HandshakeFlightContext};
+use crate::handshake::context::{Flight4Context, Flight6Context, HandshakeFlightContext};
 use crate::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::handshake::hello_verify_request::HelloVerifyRequest;
 use crate::handshake::random::Random;
@@ -260,7 +261,7 @@ impl DtlsServer {
             self.encode_handshake_message_record(&mut writer, certificate);
             self.socket.send_to(&writer.buf(), peer_addr).await?;
         }
-        {
+        let ephemeral_secret = {
             // ServerKeyExchange
             let mut writer = BufWriter::new();
             let curve_key_pair = generate_curve_key_pair();
@@ -272,7 +273,8 @@ impl DtlsServer {
             );
             self.encode_handshake_message_record(&mut writer, server_key_exchange);
             self.socket.send_to(&writer.buf(), peer_addr).await?;
-        }
+            curve_key_pair.secret
+        };
         {
             // Certificate Request
             let mut writer = BufWriter::new();
@@ -287,6 +289,11 @@ impl DtlsServer {
             self.encode_handshake_message_record(&mut writer, server_hello_done);
             self.socket.send_to(writer.buf_ref(), peer_addr).await?;
         }
+        let context = Flight6Context {
+            ephemeral_secret,
+            client_random,
+            server_random,
+        };
         Ok(())
     }
 
@@ -322,9 +329,13 @@ impl DtlsServer {
                 // - TODO: generate pre master secret
                 let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
                 let pre_master_secret = context
-                    .secret
+                    .ephemeral_secret
                     .diffie_hellman(&PublicKey::from(client_public_key));
-                // - TODO: generate master secret
+                let master_secret = generate_master_secret(
+                    pre_master_secret,
+                    &context.client_random,
+                    &context.server_random,
+                );
                 // - TODO: init GCM
                 Ok(())
             }
