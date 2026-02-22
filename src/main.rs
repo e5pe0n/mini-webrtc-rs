@@ -1,4 +1,5 @@
 mod dtls;
+mod ice;
 
 use dtls::buffer::{BufReader, BufWriter};
 use dtls::common::generate_curve_key_pair;
