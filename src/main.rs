@@ -1,34 +1,28 @@
-mod buffer;
-mod common;
-mod crypto;
-mod extension;
-mod handshake;
-mod record_header;
+mod dtls;
 
-use crate::buffer::{BufReader, BufWriter};
-use crate::common::generate_curve_key_pair;
-use crate::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
-use crate::handshake::HandshakeMessage;
-use crate::handshake::certificate::Certificate;
-use crate::handshake::certificate_request::CertificateRequest;
-use crate::handshake::client_hello::ClientHello;
-use crate::handshake::client_key_exchange::ClientKeyExchange;
-use crate::handshake::context::{Flight4Context, Flight6Context, HandshakeFlightContext};
-use crate::handshake::header::{HandshakeHeader, HandshakeType};
-use crate::handshake::hello_verify_request::HelloVerifyRequest;
-use crate::handshake::random::Random;
-use crate::handshake::server_hello::ServerHello;
-use crate::handshake::server_hello_done::ServerHelloDone;
-use crate::handshake::server_key_exchange::ServerKeyExchange;
-use crate::record_header::{ContentType, DtlsVersion, RecordHeader};
+use dtls::buffer::{BufReader, BufWriter};
+use dtls::common::generate_curve_key_pair;
+use dtls::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
+use dtls::handshake::HandshakeMessage;
+use dtls::handshake::certificate::Certificate;
+use dtls::handshake::certificate_request::CertificateRequest;
+use dtls::handshake::client_hello::ClientHello;
+use dtls::handshake::client_key_exchange::ClientKeyExchange;
+use dtls::handshake::context::{Flight4Context, Flight6Context, HandshakeFlightContext};
+use dtls::handshake::header::{HandshakeHeader, HandshakeType};
+use dtls::handshake::hello_verify_request::HelloVerifyRequest;
+use dtls::handshake::random::Random;
+use dtls::handshake::server_hello::ServerHello;
+use dtls::handshake::server_hello_done::ServerHelloDone;
+use dtls::handshake::server_key_exchange::ServerKeyExchange;
+use dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
 };
-use std::io::Read;
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
-use x25519_dalek::{EphemeralSecret, PublicKey};
+use x25519_dalek::PublicKey;
 
 struct DtlsServer {
     certified_key: CertifiedKey<KeyPair>,
@@ -117,7 +111,7 @@ impl DtlsServer {
 
         // Create Record Header
         let record_header = RecordHeader::new(
-            record_header::ContentType::Handshake,
+            ContentType::Handshake,
             DtlsVersion::new(1, 2),
             0,
             self.sequence_number,
@@ -293,7 +287,7 @@ impl DtlsServer {
             HandshakeType::CertificateVerify => {
                 // TODO
             }
-            HandshakeType::Finished {
+            HandshakeType::Finished => {
                 // TODO
             }
             _ => println!(

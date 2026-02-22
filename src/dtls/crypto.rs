@@ -3,7 +3,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use x25519_dalek::SharedSecret;
 
-use crate::handshake::random::Random;
+use crate::dtls::handshake::random::Random;
 
 type HmacSha256 = Hmac<Sha256>;
 

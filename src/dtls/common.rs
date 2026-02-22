@@ -1,6 +1,6 @@
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::{buffer::BufWriter, handshake::random::Random};
+use crate::dtls::{buffer::BufWriter, handshake::random::Random};
 
 #[derive(Debug, Clone)]
 pub struct Cookie(pub Vec<u8>); // 20 bytes

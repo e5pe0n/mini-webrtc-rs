@@ -1,6 +1,6 @@
 use x25519_dalek::EphemeralSecret;
 
-use crate::{common::Cookie, handshake::random::Random};
+use crate::dtls::{common::Cookie, handshake::random::Random};
 
 impl std::fmt::Debug for HandshakeFlightContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -1,4 +1,4 @@
-use crate::buffer::{BufReader, BufWriter};
+use crate::dtls::buffer::{BufReader, BufWriter};
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-5
 #[derive(Debug, Clone, Copy)]

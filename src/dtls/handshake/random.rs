@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use crate::buffer::{BufReader, BufWriter};
+use crate::dtls::buffer::{BufReader, BufWriter};
 
 const RANDOM_BYTES_LENGTH: usize = 28;
 

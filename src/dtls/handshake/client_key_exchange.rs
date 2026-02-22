@@ -1,4 +1,4 @@
-use crate::{
+use crate::dtls::{
     buffer::{BufReader, BufWriter},
     handshake::{HandshakeMessage, header::HandshakeType},
 };

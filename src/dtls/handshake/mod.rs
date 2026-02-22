@@ -1,4 +1,4 @@
-use crate::{buffer::BufWriter, handshake::header::HandshakeType};
+use crate::dtls::{buffer::BufWriter, handshake::header::HandshakeType};
 
 pub mod certificate;
 pub mod certificate_request;

@@ -1,4 +1,4 @@
-use crate::{
+use crate::dtls::{
     buffer::BufWriter,
     common::{CipherSuiteId, CompressionMethodId, SessionId},
     handshake::{HandshakeMessage, header::HandshakeType, random::Random},

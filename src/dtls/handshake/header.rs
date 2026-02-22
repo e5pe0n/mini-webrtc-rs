@@ -1,4 +1,4 @@
-use crate::buffer::{BufReader, BufWriter};
+use crate::dtls::buffer::{BufReader, BufWriter};
 
 #[derive(Debug, Clone, Copy)]
 pub enum HandshakeType {
