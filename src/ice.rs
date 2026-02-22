@@ -1,5 +1,7 @@
 use rand::Rng;
 
+use crate::sdp::SdpMessage;
+
 pub struct IceCandidate {
     pub ip: String,
     pub port: u64,
@@ -30,5 +32,9 @@ impl IceAgent {
                 .collect(),
             fingerprint_hash: fingerprint_hash.to_string(),
         }
+    }
+
+    pub fn generate_sdp_offer() -> SdpMessage {
+        // TODO
     }
 }
