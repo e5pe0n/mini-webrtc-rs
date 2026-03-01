@@ -1,6 +1,7 @@
 mod dtls;
 mod ice;
 mod sdp;
+mod signaling_server;
 
 use dtls::buffer::{BufReader, BufWriter};
 use dtls::common::generate_curve_key_pair;
