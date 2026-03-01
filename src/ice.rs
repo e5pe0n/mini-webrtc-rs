@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 use rand::Rng;
 
 use crate::sdp::{
@@ -5,8 +7,9 @@ use crate::sdp::{
     TransportType,
 };
 
+#[derive(Debug, Clone, Copy)]
 pub struct IceCandidate {
-    pub ip: String,
+    pub ip: IpAddr,
     pub port: u64,
 }
 
@@ -18,7 +21,7 @@ pub struct IceAgent {
 }
 
 impl IceAgent {
-    pub fn new(ice_candidates: Vec<IceCandidate>, fingerprint_hash: &str) -> Self {
+    pub fn new(ice_candidates: Vec<IceCandidate>, fingerprint_hash: String) -> Self {
         let mut rng = rand::rng();
         let ufrag: String = {
             let u_frag: String = (0..13)

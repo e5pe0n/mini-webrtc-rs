@@ -27,6 +27,8 @@ use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 use x25519_dalek::PublicKey;
 
+use crate::signaling_server::SignalingServer;
+
 struct DtlsServer {
     certified_key: CertifiedKey<KeyPair>,
     fingerprint: GenericArray<u8, U32>,
@@ -305,7 +307,11 @@ impl DtlsServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut server = DtlsServer::new("127.0.0.1:4433").await?;
-    server.run().await?;
+    let mut udp_server = DtlsServer::new("127.0.0.1:4433").await?;
+    let signaling_server = SignalingServer::new(udp_server.get_fingerprint()).await;
+
+    // Run both servers concurrently
+    tokio::try_join!(udp_server.run(), signaling_server.run())?;
+
     Ok(())
 }

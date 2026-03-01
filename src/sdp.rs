@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 pub struct SdpMessage {
     pub session_id: String,
     pub media_items: Vec<SdpMedia>,
@@ -25,7 +27,7 @@ pub enum FingerprintType {
 }
 
 pub struct SdpMediaCandidate {
-    pub ip: String,
+    pub ip: IpAddr,
     pub port: u64,
     pub candidate_type: CandidateType,
     pub transport_type: TransportType,
