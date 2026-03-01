@@ -10,7 +10,7 @@ pub struct SdpMessage {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SdpMedia {
-    pub media_id: u64,
+    pub media_id: String,
     pub media_type: MediaType,
     pub ufrag: String,
     pub pwd: String,

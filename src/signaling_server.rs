@@ -1,10 +1,18 @@
-use std::{net::Ipv4Addr, sync::Arc};
+use std::sync::Arc;
 
-use axum::{Json, Router, extract::State, response::IntoResponse, routing::get, serve::Serve};
+use axum::{
+    Json, Router,
+    extract::State,
+    response::IntoResponse,
+    routing::{get, post},
+};
 use local_ip_address::local_ip;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex};
 
-use crate::ice::{IceAgent, IceCandidate};
+use crate::{
+    ice::{IceAgent, IceCandidate, RemotePeer},
+    sdp::SdpMessage,
+};
 
 pub struct SignalingServer {
     app: Router,
@@ -12,15 +20,25 @@ pub struct SignalingServer {
 }
 
 struct AppState {
-    fingerprint_hash: String,
+    ice_agent: Mutex<IceAgent>,
 }
 
 impl SignalingServer {
     pub async fn new(fingerprint_hash: String) -> Self {
-        let shared_state = Arc::new(AppState { fingerprint_hash });
+        // local ips
+        let local_ip = local_ip().unwrap();
+        let ice_candidates = vec![IceCandidate {
+            ip: local_ip,
+            port: 4433,
+        }];
+        let ice_agent = IceAgent::new(ice_candidates, fingerprint_hash.clone());
+        let shared_state = Arc::new(AppState {
+            ice_agent: Mutex::new(ice_agent),
+        });
 
         let app = Router::new()
-            .route("/", get(get_offer_handler))
+            .route("/", get(handle_get_offer))
+            .route("/", post(handle_post_answer))
             .with_state(shared_state);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
@@ -39,14 +57,25 @@ impl SignalingServer {
     }
 }
 
-async fn get_offer_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // local ips
-    let local_ip = local_ip().unwrap();
-    let ice_candidates = vec![IceCandidate {
-        ip: local_ip,
-        port: 4433,
-    }];
-    let ice_agent = IceAgent::new(ice_candidates, state.fingerprint_hash.clone());
+async fn handle_get_offer(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let ice_agent = state.ice_agent.lock().await;
     let sdp_offer = ice_agent.generate_sdp_offer();
     Json(sdp_offer)
+}
+
+async fn handle_post_answer(
+    State(state): State<Arc<AppState>>,
+    Json(answer): Json<SdpMessage>,
+) -> impl IntoResponse {
+    let remote_peers = answer
+        .medias
+        .iter()
+        .map(|media| RemotePeer {
+            ufrag: media.ufrag.clone(),
+            pwd: media.pwd.clone(),
+            fingerprint_hash: media.fingerprint_hash.clone(),
+        })
+        .collect();
+    let mut ice_agent = state.ice_agent.lock().await;
+    ice_agent.add_remote_peers(remote_peers);
 }

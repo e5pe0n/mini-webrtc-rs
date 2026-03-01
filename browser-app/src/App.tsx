@@ -11,13 +11,13 @@ const rtcConfig: RTCConfiguration = {
 
 const signalingServerUrl = "http://localhost:3000";
 
-type SdpOffer = {
+type SdpMessage = {
   sessionId: string;
   medias: SdpMedia[];
 };
 
 type SdpMedia = {
-  mediaId: number;
+  mediaId: string;
   type: MediaType;
   ufrag: string;
   pwd: string;
@@ -40,7 +40,7 @@ type CandidateType = "host";
 type TransportType = "udp" | "tcp";
 type FingerprintType = "sha-256";
 
-async function fetchSdpOffer(): Promise<SdpOffer> {
+async function fetchSdpOffer(): Promise<SdpMessage> {
   const resp = await fetch(`${signalingServerUrl}/`);
   if (!resp.ok) {
     throw new Error("failed to fetch offer");
@@ -54,6 +54,28 @@ async function fetchSdpOffer(): Promise<SdpOffer> {
 async function sendSdpAnswer(
   answer: sdpTransform.SessionDescription,
 ): Promise<void> {
+  const sdpAnswer: SdpMessage = {
+    sessionId: String(answer.origin.sessionId),
+    medias:
+      answer.media?.map((m) => ({
+        mediaId: m.mid!,
+        type: m.type as MediaType,
+        ufrag: m.iceUfrag!,
+        pwd: m.icePwd!,
+        fingerprintType: m.fingerprint!.type as FingerprintType,
+        fingerprintHash: m.fingerprint!.hash,
+        candidates:
+          m.candidates?.map((c) => ({
+            ip: c.ip,
+            port: c.port,
+            type: c.type as CandidateType,
+            transport: c.transport as TransportType,
+          })) ?? [],
+        payloads: "",
+        rtcCodec: "",
+      })) ?? [],
+  };
+
   const resp = await fetch(`${signalingServerUrl}/`, {
     method: "POST",
     body: JSON.stringify(answer),
@@ -106,7 +128,7 @@ function App() {
       setup: "actpass",
       iceOptions: "trickle",
       media: offer.medias.map((media) => ({
-        mid: String(media.mediaId),
+        mid: media.mediaId,
         type: media.type,
         port: 9,
         rtcpMux: "rtcp-mux",

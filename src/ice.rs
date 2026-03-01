@@ -13,11 +13,19 @@ pub struct IceCandidate {
     pub port: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct RemotePeer {
+    pub ufrag: String,
+    pub pwd: String,
+    pub fingerprint_hash: String,
+}
+
 pub struct IceAgent {
     pub ice_candidates: Vec<IceCandidate>,
     pub ufrag: String,
     pub pwd: String,
     pub fingerprint_hash: String,
+    pub remote_peers: Vec<RemotePeer>,
 }
 
 impl IceAgent {
@@ -37,6 +45,7 @@ impl IceAgent {
                 .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
                 .collect(),
             fingerprint_hash: fingerprint_hash.to_string(),
+            remote_peers: vec![],
         }
     }
 
@@ -44,7 +53,7 @@ impl IceAgent {
         SdpMessage {
             session_id: "123456789".to_string(),
             medias: vec![SdpMedia {
-                media_id: 0,
+                media_id: "0".to_string(),
                 media_type: MediaType::Video,
                 payloads: "96".to_string(), // VP8
                 rtp_codec: "VP8/90000".to_string(),
@@ -66,5 +75,9 @@ impl IceAgent {
                     .collect(),
             }],
         }
+    }
+
+    pub fn add_remote_peers(&mut self, remote_peers: Vec<RemotePeer>) {
+        self.remote_peers.extend_from_slice(&remote_peers);
     }
 }
