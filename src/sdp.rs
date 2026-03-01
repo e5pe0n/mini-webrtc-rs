@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SdpMessage {
     pub session_id: String,
-    pub media_items: Vec<SdpMedia>,
+    pub medias: Vec<SdpMedia>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

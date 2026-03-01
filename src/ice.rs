@@ -43,7 +43,7 @@ impl IceAgent {
     pub fn generate_sdp_offer(&self) -> SdpMessage {
         SdpMessage {
             session_id: "123456789".to_string(),
-            media_items: vec![SdpMedia {
+            medias: vec![SdpMedia {
                 media_id: 0,
                 media_type: MediaType::Video,
                 payloads: "96".to_string(), // VP8
