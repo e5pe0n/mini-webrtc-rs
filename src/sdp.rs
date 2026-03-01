@@ -4,37 +4,38 @@ pub struct SdpMessage {
 }
 
 pub struct SdpMedia {
-    pub media_id: i64,
+    pub media_id: u64,
     pub media_type: MediaType,
-    pub u_frag: String,
+    pub ufrag: String,
     pub pwd: String,
-    fingerprint_type: FingerprintType,
-    candidates: Vec<SdpMediaCandidate>,
-    payloads: String,
-    prt_codec: String,
+    pub fingerprint_type: FingerprintType,
+    pub fingerprint_hash: String,
+    pub candidates: Vec<SdpMediaCandidate>,
+    pub payloads: String,
+    pub rtp_codec: String,
 }
 
-enum MediaType {
+pub enum MediaType {
     Video,
     Audio,
 }
 
-enum FingerprintType {
+pub enum FingerprintType {
     Sha256,
 }
 
-struct SdpMediaCandidate {
+pub struct SdpMediaCandidate {
     pub ip: String,
-    pub port: i64,
+    pub port: u64,
     pub candidate_type: CandidateType,
     pub transport_type: TransportType,
 }
 
-enum CandidateType {
+pub enum CandidateType {
     Host,
 }
 
-enum TransportType {
+pub enum TransportType {
     Udp,
     Tcp,
 }
