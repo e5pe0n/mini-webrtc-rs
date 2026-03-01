@@ -679,6 +679,7 @@ dependencies = [
  "local-ip-address",
  "rand",
  "rcgen",
+ "serde",
  "sha2",
  "tokio",
  "x25519-dalek",

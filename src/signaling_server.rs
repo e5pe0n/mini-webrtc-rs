@@ -1,6 +1,6 @@
 use std::{net::Ipv4Addr, sync::Arc};
 
-use axum::{Router, extract::State, routing::get, serve::Serve};
+use axum::{Json, Router, extract::State, response::IntoResponse, routing::get, serve::Serve};
 use local_ip_address::local_ip;
 use tokio::net::TcpListener;
 
@@ -20,7 +20,7 @@ impl SignalingServer {
         let shared_state = Arc::new(AppState { fingerprint_hash });
 
         let app = Router::new()
-            .route("/", get(handler))
+            .route("/", get(get_offer_handler))
             .with_state(shared_state);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
@@ -39,7 +39,7 @@ impl SignalingServer {
     }
 }
 
-async fn handler(State(state): State<Arc<AppState>>) {
+async fn get_offer_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // local ips
     let local_ip = local_ip().unwrap();
     let ice_candidates = vec![IceCandidate {
@@ -47,4 +47,6 @@ async fn handler(State(state): State<Arc<AppState>>) {
         port: 4433,
     }];
     let ice_agent = IceAgent::new(ice_candidates, state.fingerprint_hash.clone());
+    let sdp_offer = ice_agent.generate_sdp_offer();
+    Json(sdp_offer)
 }

@@ -1,10 +1,14 @@
 use std::net::IpAddr;
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SdpMessage {
     pub session_id: String,
     pub media_items: Vec<SdpMedia>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SdpMedia {
     pub media_id: u64,
     pub media_type: MediaType,
@@ -17,15 +21,18 @@ pub struct SdpMedia {
     pub rtp_codec: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
 pub enum MediaType {
     Video,
     Audio,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
 pub enum FingerprintType {
     Sha256,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SdpMediaCandidate {
     pub ip: IpAddr,
     pub port: u64,
@@ -33,10 +40,12 @@ pub struct SdpMediaCandidate {
     pub transport_type: TransportType,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
 pub enum CandidateType {
     Host,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
 pub enum TransportType {
     Udp,
     Tcp,
