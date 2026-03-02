@@ -11,6 +11,14 @@ impl<'a> BufReader<'a> {
         Self { buf, pos: 0 }
     }
 
+    pub fn buf(&self) -> Vec<u8> {
+        self.buf.to_vec()
+    }
+
+    pub fn rest_len(&self) -> usize {
+        self.buf.len() - self.pos
+    }
+
     pub fn read_u8(&mut self) -> Result<u8, String> {
         if self.pos < self.buf.len() {
             let b = self.buf[self.pos];

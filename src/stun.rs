@@ -1,8 +1,25 @@
 use std::collections::HashMap;
 
+use crate::dtls::buffer::BufReader;
+
 const HEADER_BYTES: usize = 20;
 const MAGIC_COOKIE_BYTES: usize = 4;
 const MAGIC_COOKIE: u32 = 0x2112A442;
+
+const METHOD_A_BITS: u16 = 0xf; // 0b0000000000001111
+const METHOD_B_BITS: u16 = 0x70; // 0b0000000001110000
+const METHOD_D_BITS: u16 = 0xf80; // 0b0000111110000000
+
+const METHOD_B_SHIFT: u16 = 1;
+const METHOD_D_SHIFT: u16 = 2;
+
+const C0_BIT: u16 = 0x01;
+const C1_BIT: u16 = 0x02;
+
+const C0_SHIFT: u16 = 4;
+const C1_SHIFT: u16 = 7;
+
+const TRANSACTION_ID_BYTES: usize = 12;
 
 pub struct StunMessage {
     pub message_type: StunMessageType,
@@ -16,6 +33,60 @@ impl StunMessage {
         buf.len() >= HEADER_BYTES
             && u32::from_be_bytes(buf[0..MAGIC_COOKIE_BYTES].try_into().unwrap()) == MAGIC_COOKIE
     }
+
+    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+        let raw_message = reader.buf();
+
+        // message type
+        // class
+        let message_type_u16 = reader.read_u16()?;
+        let c0 = (message_type_u16 >> C0_SHIFT) & C0_BIT;
+        let c1 = (message_type_u16 >> C1_SHIFT) & C1_BIT;
+        let class = c0 + c1;
+        // method
+        let a = message_type_u16 & METHOD_A_BITS;
+        let b = (message_type_u16 >> METHOD_B_SHIFT) & METHOD_B_BITS;
+        let d = (message_type_u16 >> METHOD_D_SHIFT) & METHOD_D_BITS;
+        let method = a + b + d;
+
+        let message_type = StunMessageType {
+            class: StunMessageClass::try_from(class)?,
+            method: StunMessageMethod::try_from(method)?,
+        };
+
+        let message_length = reader.read_u16()?;
+        let _magic_cookie = reader.read_u32()?;
+
+        let mut transaction_id = vec![0u8; TRANSACTION_ID_BYTES];
+        reader.read_exact(&mut transaction_id);
+
+        // let attributes: HashMap<AttributeType, Attribute>
+
+        loop {
+            match reader.read_u16() {
+                Ok(attr_type) => match reader.read_u16() {
+                    Ok(attr_length) => {
+                        let mut attr_value = vec![0u8; attr_length as usize];
+                        reader.read_exact(&mut attr_value);
+                    }
+                    Err(e) => {
+                        return Ok(StunMessage {
+                            message_type,
+                            transaction_id,
+                            raw_message,
+                        });
+                    }
+                },
+                Err(e) => {
+                    return Ok(StunMessage {
+                        message_type,
+                        transaction_id,
+                        raw_message,
+                    });
+                }
+            }
+        }
+    }
 }
 
 struct StunMessageType {
@@ -27,8 +98,72 @@ pub enum StunMessageMethod {
     Binding = 0x0001,
 }
 
-pub enum StunMessageClass {
-    Request,
+impl TryFrom<u16> for StunMessageMethod {
+    type Error = String;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0x0001 => Ok(Self::Binding),
+            _ => Err(format!("invalid stun method; {}", value)),
+        }
+    }
 }
 
-pub enum Attribute {}
+pub enum StunMessageClass {
+    Request = 0x00,
+    Indication = 0x01,
+    SuccessResponse = 0x02,
+    ErrorResponse = 0x03,
+}
+
+impl TryFrom<u16> for StunMessageClass {
+    type Error = String;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(StunMessageClass::Request),
+            0x01 => Ok(Self::Indication),
+            0x02 => Ok(Self::SuccessResponse),
+            0x03 => Ok(Self::ErrorResponse),
+            _ => Err(format!("invalid stun class; {}", value)),
+        }
+    }
+}
+
+pub enum AttributeType {
+    // STUN attributes:
+    MappedAddress = 0x0001,
+    ResponseAddress = 0x0002,
+    ChangeRequest = 0x0003,
+    SourceAddress = 0x0004,
+    ChangedAddress = 0x0005,
+    UserName = 0x0006,
+    Password = 0x0007,
+    MessageIntegrity = 0x0008,
+    ErrorCode = 0x0009,
+    UnknownAttributes = 0x000a,
+    ReflectedFrom = 0x000b,
+    Realm = 0x0014,
+    Nonce = 0x0015,
+    XorMappedAddress = 0x0020,
+    Software = 0x8022,
+    AlternateServer = 0x8023,
+    Fingerprint = 0x8028,
+
+    // TURN attributes:
+    ChannelNumber = 0x000C,
+    Lifetime = 0x000D,
+    XorPeerAddress = 0x0012,
+    Data = 0x0013,
+    XorRelayedAddress = 0x0016,
+    EvenPort = 0x0018,
+    RequestedPort = 0x0019,
+    DontFragment = 0x001A,
+    ReservationRequest = 0x0022,
+
+    // ICE attributes:
+    Priority = 0x0024,
+    UseCandidate = 0x0025,
+    IceControlled = 0x8029,
+    IceControlling = 0x802A,
+}
