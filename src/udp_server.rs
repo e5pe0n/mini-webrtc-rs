@@ -14,6 +14,7 @@ use crate::dtls::handshake::server_hello::ServerHello;
 use crate::dtls::handshake::server_hello_done::ServerHelloDone;
 use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
+use crate::stun::{StunMessage, is_stun_message};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
@@ -128,6 +129,10 @@ impl UdpServer {
             return Ok(());
         }
 
+        if StunMessage::is_stun_message(data) {
+            return self.handle_stun_message(data, peer_addr);
+        }
+
         let mut reader = BufReader::new(data);
         let record_header = RecordHeader::decode(&mut reader)?;
 
@@ -145,6 +150,19 @@ impl UdpServer {
         }
 
         Ok(())
+    }
+
+    fn handle_stun_message(
+        &mut self,
+        data: &[u8],
+        peer_addr: SocketAddr,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // respond to stun binding request of ice
+        // - decode stun message
+        // - extract client username and server username
+        // - verify server username matches ice agent ufrag
+        // - verify client username matches remote peers ufrag
+        // - send stun binding response
     }
 
     async fn handle_handshake(

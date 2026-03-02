@@ -2,6 +2,7 @@ mod dtls;
 mod ice;
 mod sdp;
 mod signaling_server;
+mod stun;
 mod udp_server;
 
 use crate::{signaling_server::SignalingServer, udp_server::UdpServer};
