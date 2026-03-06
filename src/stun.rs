@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use mini_webrtc_derive::TryFromPrimitive;
+
 use crate::dtls::buffer::BufReader;
 
 const HEADER_BYTES: usize = 20;
@@ -94,40 +96,19 @@ struct StunMessageType {
     pub class: StunMessageClass,
 }
 
+#[derive(TryFromPrimitive)]
+#[try_from(type = "u16")]
 pub enum StunMessageMethod {
     Binding = 0x0001,
 }
 
-impl TryFrom<u16> for StunMessageMethod {
-    type Error = String;
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            0x0001 => Ok(Self::Binding),
-            _ => Err(format!("invalid stun method; {}", value)),
-        }
-    }
-}
-
+#[derive(TryFromPrimitive)]
+#[try_from(type = "u16")]
 pub enum StunMessageClass {
     Request = 0x00,
     Indication = 0x01,
     SuccessResponse = 0x02,
     ErrorResponse = 0x03,
-}
-
-impl TryFrom<u16> for StunMessageClass {
-    type Error = String;
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(StunMessageClass::Request),
-            0x01 => Ok(Self::Indication),
-            0x02 => Ok(Self::SuccessResponse),
-            0x03 => Ok(Self::ErrorResponse),
-            _ => Err(format!("invalid stun class; {}", value)),
-        }
-    }
 }
 
 pub enum AttributeType {
