@@ -1,5 +1,7 @@
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
+use mini_webrtc_derive::FromPrimitive;
+
 use crate::dtls::{buffer::BufWriter, handshake::random::Random};
 
 #[derive(Debug, Clone)]
@@ -30,19 +32,11 @@ impl TryFrom<Vec<u8>> for Cookie {
 
 pub type SessionId = Vec<u8>;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, FromPrimitive)]
+#[from(type = "u16", default = "Unsupported")]
 pub enum CipherSuiteId {
     TlsEcdheEcdsaWithAes128GcmSha256 = 0xc02b,
-    Unsupported,
-}
-
-impl From<u16> for CipherSuiteId {
-    fn from(value: u16) -> Self {
-        match value {
-            0xc02b => CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256,
-            _ => CipherSuiteId::Unsupported,
-        }
-    }
+    Unsupported = 0x0000,
 }
 
 impl From<CipherSuiteId> for u16 {
@@ -51,19 +45,11 @@ impl From<CipherSuiteId> for u16 {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, FromPrimitive)]
+#[from(type = "u8", default = "Unsupported")]
 pub enum CompressionMethodId {
     Null = 0,
-    Unsupported,
-}
-
-impl From<u8> for CompressionMethodId {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => CompressionMethodId::Null,
-            _ => CompressionMethodId::Unsupported,
-        }
-    }
+    Unsupported = 0xff,
 }
 
 impl From<CompressionMethodId> for u8 {

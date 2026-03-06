@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mini_webrtc_derive::TryFromPrimitive;
+use mini_webrtc_derive::{FromPrimitive, TryFromPrimitive};
 
 use crate::dtls::buffer::BufReader;
 
@@ -111,7 +111,10 @@ pub enum StunMessageClass {
     ErrorResponse = 0x03,
 }
 
+#[derive(FromPrimitive)]
+#[from(type = "u16", default = "Unsupported")]
 pub enum AttributeType {
+    Unsupported = 0x0000,
     UserName = 0x0006,
     Password = 0x0007,
     MessageIntegrity = 0x0008,
