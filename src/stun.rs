@@ -131,39 +131,10 @@ impl TryFrom<u16> for StunMessageClass {
 }
 
 pub enum AttributeType {
-    // STUN attributes:
-    MappedAddress = 0x0001,
-    ResponseAddress = 0x0002,
-    ChangeRequest = 0x0003,
-    SourceAddress = 0x0004,
-    ChangedAddress = 0x0005,
     UserName = 0x0006,
     Password = 0x0007,
     MessageIntegrity = 0x0008,
     ErrorCode = 0x0009,
     UnknownAttributes = 0x000a,
-    ReflectedFrom = 0x000b,
-    Realm = 0x0014,
-    Nonce = 0x0015,
-    XorMappedAddress = 0x0020,
-    Software = 0x8022,
-    AlternateServer = 0x8023,
     Fingerprint = 0x8028,
-
-    // TURN attributes:
-    ChannelNumber = 0x000C,
-    Lifetime = 0x000D,
-    XorPeerAddress = 0x0012,
-    Data = 0x0013,
-    XorRelayedAddress = 0x0016,
-    EvenPort = 0x0018,
-    RequestedPort = 0x0019,
-    DontFragment = 0x001A,
-    ReservationRequest = 0x0022,
-
-    // ICE attributes:
-    Priority = 0x0024,
-    UseCandidate = 0x0025,
-    IceControlled = 0x8029,
-    IceControlling = 0x802A,
 }
