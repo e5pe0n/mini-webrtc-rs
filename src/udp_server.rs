@@ -21,6 +21,7 @@ use sha2::{
 };
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
+use tracing::{debug, info, warn};
 use x25519_dalek::PublicKey;
 
 pub struct UdpServer {
@@ -41,7 +42,7 @@ impl UdpServer {
 
         // Bind UDP socket
         let socket = UdpSocket::bind(addr).await?;
-        println!("Udp Server listening on {}", addr);
+        info!("Udp Server listening on {}", addr);
 
         Ok(UdpServer {
             certified_key,
@@ -68,7 +69,7 @@ impl UdpServer {
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        println!(
+        info!(
             "Certificate Fingerprint (SHA-256): {}",
             self.get_fingerprint()
         );
@@ -78,7 +79,7 @@ impl UdpServer {
         loop {
             // Receive data from client
             let (len, peer_addr) = self.socket.recv_from(&mut buf).await?;
-            println!("Received {} bytes from {}", len, peer_addr);
+            debug!("Received {} bytes from {}", len, peer_addr);
 
             // Parse DTLS handshake message
             self.handle_message(&buf[..len], peer_addr).await?;
@@ -138,15 +139,17 @@ impl UdpServer {
 
         match record_header.content_type {
             ContentType::ChangeCipherSpec => {
-                println!("Received ChangeCipherSpec from {}", peer_addr)
+                debug!("Received ChangeCipherSpec from {}", peer_addr)
             }
-            ContentType::Alert => println!("Received Alert from {}", peer_addr),
+            ContentType::Alert => debug!("Received Alert from {}", peer_addr),
             ContentType::Handshake => {
-                println!("Received Handshake from {}", peer_addr);
+                debug!("Received Handshake from {}", peer_addr);
                 self.handle_handshake(&mut reader, record_header, peer_addr)
                     .await?;
             }
-            ContentType::ApplicationData => println!("Received ApplicationData from {}", peer_addr),
+            ContentType::ApplicationData => {
+                debug!("Received ApplicationData from {}", peer_addr)
+            }
         }
 
         Ok(())
@@ -176,10 +179,10 @@ impl UdpServer {
         match handshake_header.handshake_type {
             HandshakeType::ClientHello => {
                 let client_hello = ClientHello::decode(reader)?;
-                println!("  -> ClientHello from {}", peer_addr);
+                debug!("  -> ClientHello from {}", peer_addr);
                 match &self.handshake_flight_context {
                     HandshakeFlightContext::Flight0 => {
-                        println!("  <- Sending HelloVerifyRequest to {}", peer_addr);
+                        debug!("  <- Sending HelloVerifyRequest to {}", peer_addr);
 
                         // TODO: negotiate dtls version
                         let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
@@ -250,7 +253,7 @@ impl UdpServer {
                             server_random,
                         };
                     }
-                    _ => println!(
+                    _ => warn!(
                         "invalid flight for ClientHello; {:?}",
                         &self.handshake_flight_context
                     ),
@@ -262,7 +265,7 @@ impl UdpServer {
                 // TODO: confirm the fingerprint hash matches the one in sdp
             }
             HandshakeType::ClientKeyExchange => {
-                println!("  -> ClientKeyExchange from {}", peer_addr);
+                debug!("  -> ClientKeyExchange from {}", peer_addr);
                 let client_key_exchange = ClientKeyExchange::decode(reader)?;
                 let client_public_key = client_key_exchange.public_key;
 
@@ -294,7 +297,7 @@ impl UdpServer {
                             &encryption_keys.client_write_iv,
                         );
                     }
-                    _ => println!(
+                    _ => warn!(
                         "invalid flight for ClientKeyExchange ; {:?}",
                         &self.handshake_flight_context
                     ),
@@ -306,7 +309,7 @@ impl UdpServer {
             HandshakeType::Finished => {
                 // TODO
             }
-            _ => println!(
+            _ => warn!(
                 "  -> Unknown handshake type {:?} from {}",
                 handshake_header.handshake_type, peer_addr
             ),

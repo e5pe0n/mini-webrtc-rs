@@ -8,6 +8,7 @@ use axum::{
 };
 use local_ip_address::local_ip;
 use tokio::{net::TcpListener, sync::Mutex};
+use tracing::info;
 
 use crate::{
     ice::{IceAgent, IceCandidate, RemotePeer},
@@ -44,7 +45,7 @@ impl SignalingServer {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
             .await
             .unwrap();
-        println!(
+        info!(
             "signaling server listening on {}",
             listener.local_addr().unwrap()
         );

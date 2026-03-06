@@ -9,6 +9,8 @@ use crate::{signaling_server::SignalingServer, udp_server::UdpServer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt::init();
+
     let mut udp_server = UdpServer::new("127.0.0.1:4433").await?;
     let signaling_server = SignalingServer::new(udp_server.get_fingerprint()).await;
 
