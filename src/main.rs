@@ -4,15 +4,35 @@ mod sdp;
 mod signaling_server;
 mod stun;
 mod udp_server;
+use local_ip_address::local_ip;
 
+use rcgen::generate_simple_self_signed;
+use sha2::{Digest, Sha256};
+
+use crate::{
+    dtls::common::Fingerprint,
+    ice::{IceAgent, IceCandidate},
+};
 use crate::{signaling_server::SignalingServer, udp_server::UdpServer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let mut udp_server = UdpServer::new("127.0.0.1:4433").await?;
-    let signaling_server = SignalingServer::new(udp_server.get_fingerprint()).await;
+    // Generate self-signed certificate
+    let certified_key = generate_simple_self_signed(vec!["localhost".to_string()])?;
+    let fingerprint = Fingerprint(Sha256::digest(certified_key.cert.der()));
+
+    // local ips
+    let local_ip = local_ip().unwrap();
+    let ice_candidates = vec![IceCandidate {
+        ip: local_ip,
+        port: 4433,
+    }];
+    let ice_agent = IceAgent::new(ice_candidates, fingerprint.clone());
+
+    let mut udp_server = UdpServer::new("127.0.0.1:4433", certified_key, ice_agent.clone()).await?;
+    let signaling_server = SignalingServer::new(ice_agent).await;
 
     // Run both servers concurrently
     tokio::try_join!(udp_server.run(), signaling_server.run())?;

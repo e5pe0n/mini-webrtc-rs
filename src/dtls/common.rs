@@ -1,8 +1,10 @@
+use hmac::digest::generic_array::GenericArray;
+use sha2::digest::generic_array::typenum::U32;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use mini_webrtc_derive::FromPrimitive;
 
-use crate::dtls::{buffer::BufWriter, handshake::random::Random};
+use crate::dtls::buffer::BufWriter;
 
 #[derive(Debug, Clone)]
 pub struct Cookie(pub Vec<u8>); // 20 bytes
@@ -142,4 +144,17 @@ pub fn generate_curve_key_pair() -> CurveKeyPair {
     let secret = EphemeralSecret::random();
     let public_key = PublicKey::from(&secret);
     CurveKeyPair { public_key, secret }
+}
+
+#[derive(Debug, Clone)]
+pub struct Fingerprint(pub GenericArray<u8, U32>);
+
+impl Fingerprint {
+    pub fn to_string(&self) -> String {
+        self.0
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(":")
+    }
 }

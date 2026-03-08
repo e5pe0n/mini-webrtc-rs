@@ -2,17 +2,13 @@ use std::io::Read;
 
 #[derive(Debug)]
 pub struct BufReader<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub buf: &'a [u8],
+    pub pos: usize,
 }
 
 impl<'a> BufReader<'a> {
     pub fn new(buf: &'a [u8]) -> Self {
         Self { buf, pos: 0 }
-    }
-
-    pub fn buf(&self) -> Vec<u8> {
-        self.buf.to_vec()
     }
 
     pub fn rest_len(&self) -> usize {

@@ -25,14 +25,7 @@ struct AppState {
 }
 
 impl SignalingServer {
-    pub async fn new(fingerprint_hash: String) -> Self {
-        // local ips
-        let local_ip = local_ip().unwrap();
-        let ice_candidates = vec![IceCandidate {
-            ip: local_ip,
-            port: 4433,
-        }];
-        let ice_agent = IceAgent::new(ice_candidates, fingerprint_hash.clone());
+    pub async fn new(ice_agent: IceAgent) -> Self {
         let shared_state = Arc::new(AppState {
             ice_agent: Mutex::new(ice_agent),
         });
@@ -74,7 +67,7 @@ async fn handle_post_answer(
         .map(|media| RemotePeer {
             ufrag: media.ufrag.clone(),
             pwd: media.pwd.clone(),
-            fingerprint_hash: media.fingerprint_hash.clone(),
+            fingerprint: media.fingerprint_hash.clone(),
         })
         .collect();
     let mut ice_agent = state.ice_agent.lock().await;

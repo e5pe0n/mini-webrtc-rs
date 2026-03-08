@@ -5,6 +5,7 @@ use mini_webrtc_derive::{FromPrimitive, TryFromPrimitive};
 use crate::dtls::buffer::BufReader;
 
 const HEADER_BYTES: usize = 20;
+
 const MAGIC_COOKIE_BYTES: usize = 4;
 const MAGIC_COOKIE: u32 = 0x2112A442;
 
@@ -27,7 +28,7 @@ pub struct StunMessage {
     pub message_type: StunMessageType,
     pub transaction_id: Vec<u8>, // 12 bytes
     pub attributes: HashMap<AttributeType, Attribute>,
-    pub raw_message: Vec<u8>,
+    pub raw: Vec<u8>,
 }
 
 impl StunMessage {
@@ -37,8 +38,6 @@ impl StunMessage {
     }
 
     pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
-        let raw_message = reader.buf();
-
         // message type
         // class
         let message_type_u16 = reader.read_u16()?;
@@ -56,7 +55,7 @@ impl StunMessage {
             method: StunMessageMethod::try_from(method)?,
         };
 
-        let message_length = reader.read_u16()?;
+        let message_length = reader.read_u16()? as usize;
         let _magic_cookie = reader.read_u32()?;
 
         let mut transaction_id = vec![0u8; TRANSACTION_ID_BYTES];
@@ -83,7 +82,7 @@ impl StunMessage {
                     message_type,
                     transaction_id,
                     attributes,
-                    raw_message,
+                    raw: reader.buf[..HEADER_BYTES + message_length].to_vec(),
                 });
             }
         }

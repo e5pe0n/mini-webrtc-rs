@@ -2,9 +2,12 @@ use std::net::IpAddr;
 
 use rand::Rng;
 
-use crate::sdp::{
-    CandidateType, FingerprintType, MediaType, SdpMedia, SdpMediaCandidate, SdpMessage,
-    TransportType,
+use crate::{
+    dtls::common::Fingerprint,
+    sdp::{
+        CandidateType, FingerprintType, MediaType, SdpMedia, SdpMediaCandidate, SdpMessage,
+        TransportType,
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -17,19 +20,20 @@ pub struct IceCandidate {
 pub struct RemotePeer {
     pub ufrag: String,
     pub pwd: String,
-    pub fingerprint_hash: String,
+    pub fingerprint: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct IceAgent {
     pub ice_candidates: Vec<IceCandidate>,
     pub ufrag: String,
     pub pwd: String,
-    pub fingerprint_hash: String,
+    pub fingerprint: Fingerprint,
     pub remote_peers: Vec<RemotePeer>,
 }
 
 impl IceAgent {
-    pub fn new(ice_candidates: Vec<IceCandidate>, fingerprint_hash: String) -> Self {
+    pub fn new(ice_candidates: Vec<IceCandidate>, fingerprint: Fingerprint) -> Self {
         let mut rng = rand::rng();
         let ufrag: String = {
             let u_frag: String = (0..13)
@@ -44,7 +48,7 @@ impl IceAgent {
             pwd: (0..32)
                 .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
                 .collect(),
-            fingerprint_hash: fingerprint_hash.to_string(),
+            fingerprint,
             remote_peers: vec![],
         }
     }
@@ -60,18 +64,16 @@ impl IceAgent {
                 ufrag: self.ufrag.clone(),
                 pwd: self.pwd.clone(),
                 fingerprint_type: FingerprintType::Sha256,
-                fingerprint_hash: self.fingerprint_hash.clone(),
+                fingerprint_hash: self.fingerprint.to_string(),
                 candidates: self
                     .ice_candidates
                     .iter()
-                    .map(
-                        (|c| SdpMediaCandidate {
-                            ip: c.ip.clone(),
-                            port: c.port,
-                            candidate_type: CandidateType::Host,
-                            transport_type: TransportType::Udp,
-                        }),
-                    )
+                    .map(|c| SdpMediaCandidate {
+                        ip: c.ip.clone(),
+                        port: c.port,
+                        candidate_type: CandidateType::Host,
+                        transport_type: TransportType::Udp,
+                    })
                     .collect(),
             }],
         }

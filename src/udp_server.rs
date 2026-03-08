@@ -14,7 +14,8 @@ use crate::dtls::handshake::server_hello::ServerHello;
 use crate::dtls::handshake::server_hello_done::ServerHelloDone;
 use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
-use crate::stun::{AttributeType, StunMessage, is_stun_message};
+use crate::ice::IceAgent;
+use crate::stun::{AttributeType, StunMessage};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
@@ -26,7 +27,7 @@ use x25519_dalek::PublicKey;
 
 pub struct UdpServer {
     certified_key: CertifiedKey<KeyPair>,
-    fingerprint: GenericArray<u8, U32>,
+    ice_agent: IceAgent,
     socket: UdpSocket,
     pub handshake_flight_context: HandshakeFlightContext,
     message_seq: u16,
@@ -35,18 +36,18 @@ pub struct UdpServer {
 }
 
 impl UdpServer {
-    pub async fn new(addr: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        // Generate self-signed certificate
-        let certified_key = generate_simple_self_signed(vec!["localhost".to_string()])?;
-        let fingerprint = Sha256::digest(certified_key.cert.der());
-
+    pub async fn new(
+        addr: &str,
+        certified_key: CertifiedKey<KeyPair>,
+        ice_agent: IceAgent,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         // Bind UDP socket
         let socket = UdpSocket::bind(addr).await?;
         info!("Udp Server listening on {}", addr);
 
         Ok(UdpServer {
             certified_key,
-            fingerprint,
+            ice_agent,
             socket,
             handshake_flight_context: HandshakeFlightContext::Flight0,
             message_seq: 0,
@@ -55,25 +56,12 @@ impl UdpServer {
         })
     }
 
-    pub fn get_fingerprint(&self) -> String {
-        self.fingerprint
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<Vec<_>>()
-            .join(":")
-    }
-
     fn increment_epoch(&mut self) {
         self.epoch += 1;
         self.sequence_number = 0;
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!(
-            "Certificate Fingerprint (SHA-256): {}",
-            self.get_fingerprint()
-        );
-
         let mut buf = vec![0u8; 65535];
 
         loop {
@@ -171,7 +159,9 @@ impl UdpServer {
             .ok_or("username attribute does not exists.")?;
         // https://datatracker.ietf.org/doc/html/rfc8445#section-7.2.2
         // - verify server username matches ice agent ufrag
-        let server_username = unsafe { String::from_utf8_unchecked(username.value) };
+        let username = unsafe { String::from_utf8_unchecked(username.value) };
+        // find ice candidate
+        if username == self.ice_agent.ufrag {}
         // - verify client username matches remote peers ufrag
         // - send stun binding response
     }
