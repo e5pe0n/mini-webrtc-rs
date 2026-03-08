@@ -162,6 +162,8 @@ impl UdpServer {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // respond to stun binding request of ice
         // - decode stun message
+        let mut reader = BufReader::new(data);
+        let message = StunMessage::decode(&mut reader)?;
         // - extract client username and server username
         // - verify server username matches ice agent ufrag
         // - verify client username matches remote peers ufrag

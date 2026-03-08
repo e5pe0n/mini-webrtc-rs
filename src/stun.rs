@@ -26,7 +26,7 @@ const TRANSACTION_ID_BYTES: usize = 12;
 pub struct StunMessage {
     pub message_type: StunMessageType,
     pub transaction_id: Vec<u8>, // 12 bytes
-    // pub attributes: HashMap<AttributeType, Attribute>,
+    pub attributes: HashMap<AttributeType, Attribute>,
     pub raw_message: Vec<u8>,
 }
 
@@ -62,30 +62,29 @@ impl StunMessage {
         let mut transaction_id = vec![0u8; TRANSACTION_ID_BYTES];
         reader.read_exact(&mut transaction_id);
 
-        // let attributes: HashMap<AttributeType, Attribute>
+        let mut attributes: HashMap<AttributeType, Attribute> = HashMap::new();
 
         loop {
-            match reader.read_u16() {
-                Ok(attr_type) => match reader.read_u16() {
-                    Ok(attr_length) => {
-                        let mut attr_value = vec![0u8; attr_length as usize];
-                        reader.read_exact(&mut attr_value);
-                    }
-                    Err(e) => {
-                        return Ok(StunMessage {
-                            message_type,
-                            transaction_id,
-                            raw_message,
-                        });
-                    }
+            let offset = (message_length as usize) - reader.rest_len();
+            let attr_type = AttributeType::from(reader.read_u16()?);
+            let attr_length = reader.read_u16()?;
+            let mut attr_value = vec![0u8; attr_length as usize];
+            reader.read_exact(&mut attr_value);
+            attributes.insert(
+                attr_type.clone(),
+                Attribute {
+                    attribute_type: attr_type,
+                    value: attr_value,
+                    offset_in_message: offset,
                 },
-                Err(e) => {
-                    return Ok(StunMessage {
-                        message_type,
-                        transaction_id,
-                        raw_message,
-                    });
-                }
+            );
+            if reader.rest_len() == 0 {
+                return Ok(StunMessage {
+                    message_type,
+                    transaction_id,
+                    attributes,
+                    raw_message,
+                });
             }
         }
     }
@@ -111,7 +110,7 @@ pub enum StunMessageClass {
     ErrorResponse = 0x03,
 }
 
-#[derive(FromPrimitive)]
+#[derive(FromPrimitive, Eq, PartialEq, Hash, Clone, Copy)]
 #[from(type = "u16", default = "Unsupported")]
 pub enum AttributeType {
     Unsupported = 0x0000,
@@ -121,4 +120,10 @@ pub enum AttributeType {
     ErrorCode = 0x0009,
     UnknownAttributes = 0x000a,
     Fingerprint = 0x8028,
+}
+
+pub struct Attribute {
+    attribute_type: AttributeType,
+    value: Vec<u8>,
+    offset_in_message: usize,
 }
