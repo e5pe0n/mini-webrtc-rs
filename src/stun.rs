@@ -114,7 +114,7 @@ pub enum StunMessageClass {
 #[from(type = "u16", default = "Unsupported")]
 pub enum AttributeType {
     Unsupported = 0x0000,
-    UserName = 0x0006,
+    Username = 0x0006,
     Password = 0x0007,
     MessageIntegrity = 0x0008,
     ErrorCode = 0x0009,
@@ -123,7 +123,7 @@ pub enum AttributeType {
 }
 
 pub struct Attribute {
-    attribute_type: AttributeType,
-    value: Vec<u8>,
-    offset_in_message: usize,
+    pub attribute_type: AttributeType,
+    pub value: Vec<u8>,
+    pub offset_in_message: usize,
 }

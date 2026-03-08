@@ -14,7 +14,7 @@ use crate::dtls::handshake::server_hello::ServerHello;
 use crate::dtls::handshake::server_hello_done::ServerHelloDone;
 use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
-use crate::stun::{StunMessage, is_stun_message};
+use crate::stun::{AttributeType, StunMessage, is_stun_message};
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use sha2::{
     Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
@@ -164,8 +164,14 @@ impl UdpServer {
         // - decode stun message
         let mut reader = BufReader::new(data);
         let message = StunMessage::decode(&mut reader)?;
-        // - extract client username and server username
+        // - extract server username and client username
+        let username = message
+            .attributes
+            .get(&AttributeType::Username)
+            .ok_or("username attribute does not exists.")?;
+        // https://datatracker.ietf.org/doc/html/rfc8445#section-7.2.2
         // - verify server username matches ice agent ufrag
+        let server_username = unsafe { String::from_utf8_unchecked(username.value) };
         // - verify client username matches remote peers ufrag
         // - send stun binding response
     }
