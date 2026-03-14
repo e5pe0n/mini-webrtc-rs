@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use crate::dtls::{
     buffer::{BufReader, BufWriter},
     common::Cookie,
@@ -19,7 +21,7 @@ impl HelloVerifyRequest {
         }
     }
 
-    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+    pub fn decode(reader: &mut BufReader) -> Result<Self> {
         let version_u16 = reader.read_u16()?;
         let version = DtlsVersion::try_from(version_u16)?;
 

@@ -7,9 +7,8 @@ pub fn derive_try_from_primitive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let enum_name = &input.ident;
 
-    // Parse attributes to get type and error message
+    // Parse attributes to get type
     let mut from_type: Option<syn::Type> = None;
-    let mut error_msg: Option<String> = None;
 
     for attr in &input.attrs {
         if attr.path().is_ident("try_from") {
@@ -18,10 +17,6 @@ pub fn derive_try_from_primitive(input: TokenStream) -> TokenStream {
                     let _: Token![=] = meta.input.parse()?;
                     let type_str: syn::LitStr = meta.input.parse()?;
                     from_type = syn::parse_str(&type_str.value()).ok();
-                } else if meta.path.is_ident("error") {
-                    let _: Token![=] = meta.input.parse()?;
-                    let error_str: syn::LitStr = meta.input.parse()?;
-                    error_msg = Some(error_str.value());
                 }
                 Ok(())
             });
@@ -29,7 +24,6 @@ pub fn derive_try_from_primitive(input: TokenStream) -> TokenStream {
     }
 
     let from_type = from_type.expect("Missing #[try_from(type = \"...\")] attribute");
-    let error_msg = error_msg.unwrap_or_else(|| format!("invalid {}; {{}}", enum_name));
 
     // Extract enum variants and their discriminants
     let variants = match &input.data {
@@ -57,12 +51,15 @@ pub fn derive_try_from_primitive(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl TryFrom<#from_type> for #enum_name {
-            type Error = String;
+            type Error = crate::error::Error;
 
             fn try_from(value: #from_type) -> Result<Self, Self::Error> {
                 match value {
                     #(#match_arms,)*
-                    _ => Err(format!(#error_msg, value)),
+                    _ => Err(crate::error::Error::InvalidEnumVariantError {
+                        enum_name: stringify!(#enum_name).to_string(),
+                        value: format!("{:?}", value),
+                    }),
                 }
             }
         }

@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use crate::dtls::{
     buffer::{BufReader, BufWriter},
     handshake::{HandshakeMessage, header::HandshakeType},
@@ -10,11 +12,15 @@ pub struct ClientKeyExchange {
 }
 
 impl ClientKeyExchange {
-    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+    pub fn decode(reader: &mut BufReader) -> Result<Self> {
         let len = reader.read_u8()?;
         let mut public_key = vec![0u8; len as usize];
         reader.read_exact(&mut public_key);
         Ok(Self { public_key })
+    }
+
+    pub fn encode(&self, writer: &mut BufWriter) {
+        // TODO
     }
 }
 

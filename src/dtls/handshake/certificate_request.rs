@@ -1,8 +1,7 @@
 use crate::dtls::{
-    buffer::{BufReader, BufWriter},
-    common::{AlgoPair, CertificateType, Cookie, HashAlgorithm, SignatureAlgorithm},
+    buffer::BufWriter,
+    common::{AlgoPair, CertificateType, HashAlgorithm, SignatureAlgorithm},
     handshake::{HandshakeMessage, header::HandshakeType},
-    record_header::DtlsVersion,
 };
 
 #[derive(Debug)]

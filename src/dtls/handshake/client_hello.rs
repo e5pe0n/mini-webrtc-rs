@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use crate::dtls::{
     buffer::BufReader,
     common::{CipherSuiteId, CompressionMethodId, Cookie},
@@ -16,7 +18,7 @@ pub struct ClientHello {
 }
 
 impl ClientHello {
-    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+    pub fn decode(reader: &mut BufReader) -> Result<Self> {
         let raw_version = reader.read_u16()?;
         let version = DtlsVersion::try_from(raw_version)?;
 

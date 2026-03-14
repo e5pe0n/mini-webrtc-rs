@@ -1,8 +1,6 @@
 use crate::dtls::{
     buffer::BufWriter,
-    common::{CipherSuiteId, CompressionMethodId, SessionId},
-    handshake::{HandshakeMessage, header::HandshakeType, random::Random},
-    record_header::DtlsVersion,
+    handshake::{HandshakeMessage, header::HandshakeType},
 };
 
 #[derive(Debug)]
@@ -13,7 +11,9 @@ impl ServerHelloDone {
         Self {}
     }
 
-    pub fn encode(&self, writer: &mut BufWriter) {}
+    pub fn encode(&self, writer: &mut BufWriter) {
+        // TODO
+    }
 }
 
 impl HandshakeMessage for ServerHelloDone {

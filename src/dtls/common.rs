@@ -1,3 +1,4 @@
+use anyhow::{Result, anyhow};
 use hmac::digest::generic_array::GenericArray;
 use sha2::digest::generic_array::typenum::U32;
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -18,11 +19,11 @@ impl Cookie {
 }
 
 impl TryFrom<Vec<u8>> for Cookie {
-    type Error = String;
+    type Error = anyhow::Error;
 
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+    fn try_from(value: Vec<u8>) -> Result<Self> {
         if value.len() != 20 {
-            Err(format!(
+            Err(anyhow!(
                 "invalid cookie; expected 20 bytes, but {} bytes",
                 value.len(),
             ))

@@ -1,26 +1,17 @@
 use crate::dtls::buffer::{BufReader, BufWriter};
+use mini_webrtc_derive::TryFromPrimitive;
+
+use anyhow::anyhow;
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-5
+#[derive(TryFromPrimitive)]
+#[try_from(type = "u8")]
 #[derive(Debug, Clone, Copy)]
 pub enum ContentType {
     ChangeCipherSpec = 20,
     Alert = 21,
     Handshake = 22,
     ApplicationData = 23,
-}
-
-impl TryFrom<u8> for ContentType {
-    type Error = String;
-
-    fn try_from(val: u8) -> Result<Self, Self::Error> {
-        match val {
-            20 => Ok(ContentType::ChangeCipherSpec),
-            21 => Ok(ContentType::Alert),
-            22 => Ok(ContentType::Handshake),
-            23 => Ok(ContentType::ApplicationData),
-            _ => Err(format!("invalid content type: {}", val)),
-        }
-    }
 }
 
 const DTLS_VERSION_1_0: u16 = 0xfeff;
@@ -33,13 +24,13 @@ pub struct DtlsVersion {
 }
 
 impl TryFrom<u16> for DtlsVersion {
-    type Error = String;
+    type Error = anyhow::Error;
 
     fn try_from(val: u16) -> Result<Self, Self::Error> {
         match val {
             DTLS_VERSION_1_0 => Ok(DtlsVersion { major: 1, minor: 0 }),
             DTLS_VERSION_1_2 => Ok(DtlsVersion { major: 1, minor: 2 }),
-            _ => Err(format!("invalid dtls version: {}", val)),
+            _ => Err(anyhow!("invalid dtls version: {}", val)),
         }
     }
 }
@@ -80,7 +71,7 @@ impl RecordHeader {
         }
     }
 
-    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+    pub fn decode(reader: &mut BufReader) -> anyhow::Result<Self> {
         let content_type_byte = reader.read_u8()?;
         let content_type = content_type_byte.try_into()?;
 

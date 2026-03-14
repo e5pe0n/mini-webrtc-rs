@@ -1,5 +1,10 @@
+use anyhow::Result;
+use mini_webrtc_derive::TryFromPrimitive;
+
 use crate::dtls::buffer::{BufReader, BufWriter};
 
+#[derive(TryFromPrimitive)]
+#[try_from(type = "u8")]
 #[derive(Debug, Clone, Copy)]
 pub enum HandshakeType {
     HelloRequest = 0,
@@ -13,27 +18,6 @@ pub enum HandshakeType {
     CertificateVerify = 15,
     ClientKeyExchange = 16,
     Finished = 20,
-}
-
-impl TryFrom<u8> for HandshakeType {
-    type Error = String;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(HandshakeType::HelloRequest),
-            1 => Ok(HandshakeType::ClientHello),
-            2 => Ok(HandshakeType::ServerHello),
-            3 => Ok(HandshakeType::HelloVerifyRequest),
-            11 => Ok(HandshakeType::Certificate),
-            12 => Ok(HandshakeType::ServerKeyExchange),
-            13 => Ok(HandshakeType::CertificateRequest),
-            14 => Ok(HandshakeType::ServerHelloDone),
-            15 => Ok(HandshakeType::CertificateVerify),
-            16 => Ok(HandshakeType::ClientKeyExchange),
-            20 => Ok(HandshakeType::Finished),
-            _ => Err(format!("invalid handshake type: {}", value)),
-        }
-    }
 }
 
 pub struct HandshakeHeader {
@@ -61,7 +45,7 @@ impl HandshakeHeader {
         }
     }
 
-    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+    pub fn decode(reader: &mut BufReader) -> Result<Self> {
         let handshake_type_u8 = reader.read_u8()?;
         let handshake_type = HandshakeType::try_from(handshake_type_u8)?;
 

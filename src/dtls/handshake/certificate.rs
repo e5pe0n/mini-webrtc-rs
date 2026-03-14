@@ -25,7 +25,7 @@ impl Certificate {
         writer.write_bytes(buf);
     }
 
-    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+    pub fn decode(reader: &mut BufReader) -> anyhow::Result<Self> {
         let length = reader.read_u24()?;
         let mut certificates: Vec<Vec<u8>> = vec![];
         for _ in 0..length {
