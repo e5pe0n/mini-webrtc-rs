@@ -17,7 +17,7 @@ pub struct IceCandidate {
 }
 
 #[derive(Debug, Clone)]
-pub struct RemotePeer {
+pub struct Peer {
     pub ufrag: String,
     pub pwd: String,
     pub fingerprint: String,
@@ -26,18 +26,14 @@ pub struct RemotePeer {
 #[derive(Debug, Clone)]
 pub struct IceAgent {
     pub ice_candidates: Vec<IceCandidate>,
-    pub local_ufrag: String,
-    pub local_pwd: String,
-    pub remote_ufrag: Option<String>,
-    pub remote_pwd: Option<String>,
-    pub fingerprint: Fingerprint,
-    pub remote_peers: Vec<RemotePeer>,
+    pub local_peer: Peer,
+    pub remote_peer: Option<Peer>,
 }
 
 impl IceAgent {
     pub fn new(ice_candidates: Vec<IceCandidate>, fingerprint: Fingerprint) -> Self {
         let mut rng = rand::rng();
-        let local_ufrag: String = {
+        let ufrag: String = {
             let u_frag: String = (0..13)
                 .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
                 .collect();
@@ -46,14 +42,14 @@ impl IceAgent {
 
         Self {
             ice_candidates,
-            local_ufrag,
-            local_pwd: (0..32)
-                .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
-                .collect(),
-            remote_ufrag: None,
-            remote_pwd: None,
-            fingerprint,
-            remote_peers: vec![],
+            local_peer: Peer {
+                ufrag,
+                pwd: (0..32)
+                    .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
+                    .collect(),
+                fingerprint: fingerprint.to_string(),
+            },
+            remote_peer: None,
         }
     }
 
@@ -65,10 +61,10 @@ impl IceAgent {
                 media_type: MediaType::Video,
                 payloads: "96".to_string(), // VP8
                 rtp_codec: "VP8/90000".to_string(),
-                ufrag: self.local_ufrag.clone(),
-                pwd: self.local_pwd.clone(),
+                ufrag: self.local_peer.ufrag.clone(),
+                pwd: self.local_peer.pwd.clone(),
                 fingerprint_type: FingerprintType::Sha256,
-                fingerprint_hash: self.fingerprint.to_string(),
+                fingerprint_hash: self.local_peer.fingerprint.clone(),
                 candidates: self
                     .ice_candidates
                     .iter()
@@ -81,9 +77,5 @@ impl IceAgent {
                     .collect(),
             }],
         }
-    }
-
-    pub fn add_remote_peers(&mut self, remote_peers: Vec<RemotePeer>) {
-        self.remote_peers.extend_from_slice(&remote_peers);
     }
 }

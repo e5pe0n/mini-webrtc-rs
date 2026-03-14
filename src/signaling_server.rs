@@ -3,15 +3,16 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::State,
+    http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
 };
-use local_ip_address::local_ip;
+use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::Mutex};
 use tracing::info;
 
 use crate::{
-    ice::{IceAgent, IceCandidate, RemotePeer},
+    ice::{IceAgent, Peer},
     sdp::SdpMessage,
 };
 
@@ -22,6 +23,13 @@ pub struct SignalingServer {
 
 struct AppState {
     ice_agent: Mutex<IceAgent>,
+}
+
+type Return<T> = Result<(StatusCode, Json<T>), (StatusCode, String)>;
+
+#[derive(Deserialize, Serialize)]
+struct SimpleResponse {
+    message: String,
 }
 
 impl SignalingServer {
@@ -61,20 +69,30 @@ async fn handle_post_answer(
     State(state): State<Arc<AppState>>,
     Json(answer): Json<SdpMessage>,
 ) -> impl IntoResponse {
-    if let Some(remote) = answer
+    if let Some(remote_peer) = answer
         .medias
         .iter()
-        .map(|media| RemotePeer {
+        .map(|media| Peer {
             ufrag: media.ufrag.clone(),
             pwd: media.pwd.clone(),
             fingerprint: media.fingerprint_hash.clone(),
         })
         .next()
     {
+        let mut ice_agent = state.ice_agent.lock().await;
+        ice_agent.remote_peer = Some(remote_peer);
+        return Ok((
+            StatusCode::OK,
+            Json(SimpleResponse {
+                message: "post answer succeeded.".to_string(),
+            }),
+        ));
     } else {
-        Json()
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(SimpleResponse {
+                message: "media not found in sdp message.".to_string(),
+            }),
+        ));
     }
-
-    let mut ice_agent = state.ice_agent.lock().await;
-    ice_agent.add_remote_peers(remote_peers);
 }
