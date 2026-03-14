@@ -17,10 +17,7 @@ use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
 use crate::ice::IceAgent;
 use crate::stun::{AttributeType, StunMessage};
 use anyhow::Result;
-use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
-use sha2::{
-    Digest, Sha256, digest::generic_array::GenericArray, digest::generic_array::typenum::U32,
-};
+use rcgen::{CertifiedKey, KeyPair};
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
@@ -164,7 +161,7 @@ impl UdpServer {
         reader: &'_ mut BufReader<'_>,
         record_header: RecordHeader,
         peer_addr: SocketAddr,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<()> {
         let handshake_header = HandshakeHeader::decode(reader)?;
 
         match handshake_header.handshake_type {

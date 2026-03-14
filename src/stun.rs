@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::collections::HashMap;
 
 use mini_webrtc_derive::{FromPrimitive, TryFromPrimitive};
@@ -37,7 +38,7 @@ impl StunMessage {
             && u32::from_be_bytes(buf[0..MAGIC_COOKIE_BYTES].try_into().unwrap()) == MAGIC_COOKIE
     }
 
-    pub fn decode(reader: &mut BufReader) -> Result<Self, String> {
+    pub fn decode(reader: &mut BufReader) -> Result<Self> {
         // message type
         // class
         let message_type_u16 = reader.read_u16()?;
