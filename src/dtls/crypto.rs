@@ -10,7 +10,7 @@ type HmacSha256 = Hmac<Sha256>;
 const PRF_MASTER_SECRET_LABEL: &str = "master secret";
 const PRF_KEY_EXPANSION_LABEL: &str = "key expansion";
 
-fn hmac_sha(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub fn hmac_sha(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut mac = <HmacSha256 as Mac>::new_from_slice(key).unwrap();
     mac.update(data);
     mac.finalize().into_bytes().to_vec()

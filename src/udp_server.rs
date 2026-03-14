@@ -15,10 +15,14 @@ use crate::dtls::handshake::server_hello_done::ServerHelloDone;
 use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
 use crate::ice::IceAgent;
-use crate::stun::{AttributeType, StunMessage};
-use anyhow::Result;
+use crate::stun::{
+    Attribute, AttributeType, HEADER_BYTES, MAGIC_COOKIE, StunMessage, StunMessageBuilder,
+    StunMessageClass, StunMessageMethod, StunMessageType,
+};
+use anyhow::{Result, anyhow};
 use rcgen::{CertifiedKey, KeyPair};
-use std::net::SocketAddr;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
 use x25519_dalek::PublicKey;
@@ -113,7 +117,7 @@ impl UdpServer {
         }
 
         if StunMessage::is_stun_message(data) {
-            return self.handle_stun_message(data, peer_addr);
+            return self.handle_stun_message(data, peer_addr).await;
         }
 
         let mut reader = BufReader::new(data);
@@ -137,23 +141,67 @@ impl UdpServer {
         Ok(())
     }
 
-    fn handle_stun_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+    async fn handle_stun_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         // respond to stun binding request of ice
         // - decode stun message
         let mut reader = BufReader::new(data);
         let message = StunMessage::decode(&mut reader)?;
         // - extract server username and client username
-        let username = message
+        let username_attr = message
             .attributes
             .get(&AttributeType::Username)
-            .ok_or("username attribute does not exists.")?;
+            .ok_or(anyhow!("username attribute does not exists."))?;
         // https://datatracker.ietf.org/doc/html/rfc8445#section-7.2.2
-        // - verify server username matches ice agent ufrag
-        let username = unsafe { String::from_utf8_unchecked(username.value) };
-        // find ice candidate
-        if username == self.ice_agent.local_ufrag {}
-        // - verify client username matches remote peers ufrag
+        // - verify username in the message
+        let username = unsafe { String::from_utf8_unchecked(username_attr.value.clone()) };
+        let expected_username = self.ice_agent.local_peer.ufrag.clone()
+            + ":"
+            + &self.ice_agent.remote_peer.as_ref().unwrap().ufrag.clone();
+        if username != expected_username {
+            warn!(
+                "username attribute mismatch: expected={expected_username}, actual={username}; ignore the message."
+            );
+            return Ok(()); // ignore message
+        }
+        // - verify message integrity
+        if !message.verify_message_integrity(self.ice_agent.local_peer.pwd.clone())? {
+            warn!("message integrity mismatch; ignore the message.");
+            return Ok(()); // ignore message
+        }
+
         // - send stun binding response
+        let response_message = StunMessageBuilder::new(
+            StunMessageType {
+                method: StunMessageMethod::Binding,
+                class: StunMessageClass::SuccessResponse,
+            },
+            message.transaction_id,
+        )
+        .add_attr(AttributeType::XorMappedAddress, {
+            let mut value_buf = BufWriter::new();
+            value_buf.write_u8(0);
+            value_buf.write_u8(
+                0x0a, // ip v4
+            );
+            let x_port = peer_addr.port() ^ ((MAGIC_COOKIE >> 16) as u16);
+            value_buf.write_u16(x_port);
+            let ip_addr_bytes = match peer_addr.ip() {
+                IpAddr::V4(addr) => addr.octets(),
+                IpAddr::V6(addr) => {
+                    return Err(anyhow!("ip address is not ipv4; {addr}"));
+                }
+            };
+            for (i, octet) in ip_addr_bytes.iter().enumerate() {
+                value_buf.write_u8(octet ^ (MAGIC_COOKIE >> (8 * (3 - i))) as u8);
+            }
+            value_buf.buf()
+        })
+        .add_attr(AttributeType::Username, username_attr.value.clone())
+        .build();
+        self.socket
+            .send_to(&response_message.raw, peer_addr)
+            .await?;
+        Ok(())
     }
 
     async fn handle_handshake(
