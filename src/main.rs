@@ -1,9 +1,11 @@
 mod dtls;
+mod error;
 mod ice;
 mod sdp;
 mod signaling_server;
 mod stun;
 mod udp_server;
+
 use local_ip_address::local_ip;
 
 use rcgen::generate_simple_self_signed;

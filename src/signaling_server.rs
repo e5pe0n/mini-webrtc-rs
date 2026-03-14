@@ -61,7 +61,7 @@ async fn handle_post_answer(
     State(state): State<Arc<AppState>>,
     Json(answer): Json<SdpMessage>,
 ) -> impl IntoResponse {
-    let remote_peers = answer
+    if let Some(remote) = answer
         .medias
         .iter()
         .map(|media| RemotePeer {
@@ -69,7 +69,12 @@ async fn handle_post_answer(
             pwd: media.pwd.clone(),
             fingerprint: media.fingerprint_hash.clone(),
         })
-        .collect();
+        .next()
+    {
+    } else {
+        Json()
+    }
+
     let mut ice_agent = state.ice_agent.lock().await;
     ice_agent.add_remote_peers(remote_peers);
 }

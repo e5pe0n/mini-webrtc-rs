@@ -161,7 +161,7 @@ impl UdpServer {
         // - verify server username matches ice agent ufrag
         let username = unsafe { String::from_utf8_unchecked(username.value) };
         // find ice candidate
-        if username == self.ice_agent.ufrag {}
+        if username == self.ice_agent.local_ufrag {}
         // - verify client username matches remote peers ufrag
         // - send stun binding response
     }

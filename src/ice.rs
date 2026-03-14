@@ -26,8 +26,10 @@ pub struct RemotePeer {
 #[derive(Debug, Clone)]
 pub struct IceAgent {
     pub ice_candidates: Vec<IceCandidate>,
-    pub ufrag: String,
-    pub pwd: String,
+    pub local_ufrag: String,
+    pub local_pwd: String,
+    pub remote_ufrag: Option<String>,
+    pub remote_pwd: Option<String>,
     pub fingerprint: Fingerprint,
     pub remote_peers: Vec<RemotePeer>,
 }
@@ -35,7 +37,7 @@ pub struct IceAgent {
 impl IceAgent {
     pub fn new(ice_candidates: Vec<IceCandidate>, fingerprint: Fingerprint) -> Self {
         let mut rng = rand::rng();
-        let ufrag: String = {
+        let local_ufrag: String = {
             let u_frag: String = (0..13)
                 .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
                 .collect();
@@ -44,10 +46,12 @@ impl IceAgent {
 
         Self {
             ice_candidates,
-            ufrag,
-            pwd: (0..32)
+            local_ufrag,
+            local_pwd: (0..32)
                 .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
                 .collect(),
+            remote_ufrag: None,
+            remote_pwd: None,
             fingerprint,
             remote_peers: vec![],
         }
@@ -61,8 +65,8 @@ impl IceAgent {
                 media_type: MediaType::Video,
                 payloads: "96".to_string(), // VP8
                 rtp_codec: "VP8/90000".to_string(),
-                ufrag: self.ufrag.clone(),
-                pwd: self.pwd.clone(),
+                ufrag: self.local_ufrag.clone(),
+                pwd: self.local_pwd.clone(),
                 fingerprint_type: FingerprintType::Sha256,
                 fingerprint_hash: self.fingerprint.to_string(),
                 candidates: self
