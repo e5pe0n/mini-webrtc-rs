@@ -170,14 +170,7 @@ impl UdpServer {
         }
 
         // - send stun binding response
-        let response_message = StunMessageBuilder::new(
-            StunMessageType {
-                method: StunMessageMethod::Binding,
-                class: StunMessageClass::SuccessResponse,
-            },
-            message.transaction_id,
-        )
-        .add_attr(AttributeType::XorMappedAddress, {
+        let xor_mapped_address = {
             let mut value_buf = BufWriter::new();
             value_buf.write_u8(0);
             value_buf.write_u8(
@@ -195,9 +188,17 @@ impl UdpServer {
                 value_buf.write_u8(octet ^ (MAGIC_COOKIE >> (8 * (3 - i))) as u8);
             }
             value_buf.buf()
-        })
-        .add_attr(AttributeType::Username, username_attr.value.clone())
-        .build();
+        };
+        let response_message = StunMessageBuilder::new(
+            StunMessageType {
+                method: StunMessageMethod::Binding,
+                class: StunMessageClass::SuccessResponse,
+            },
+            message.transaction_id,
+        )
+        .add_attr(AttributeType::XorMappedAddress, &xor_mapped_address)
+        .add_attr(AttributeType::Username, &username_attr.value[..])
+        .build(self.ice_agent.local_peer.pwd.clone());
         self.socket
             .send_to(&response_message.raw, peer_addr)
             .await?;

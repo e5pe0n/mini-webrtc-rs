@@ -1,7 +1,5 @@
-use aes_gcm::KeyInit;
 use anyhow::{Result, anyhow};
-use hmac::Hmac;
-use sha2::Sha256;
+use crc::{CRC_32_ISO_HDLC, Crc};
 use std::collections::HashMap;
 
 use mini_webrtc_derive::{FromPrimitive, TryFromPrimitive};
@@ -33,6 +31,8 @@ pub const TRANSACTION_ID_BYTES: usize = 12;
 
 const ATTRIBUTE_HEADER_BYTES: usize = 4;
 const HMAC_SIGNATURE_BYTES: usize = 20;
+const FINGERPRINT_BYTES: usize = 4;
+const FINGERPRINT_XOR_MASK: u32 = 0x5354554e;
 
 pub struct StunMessage {
     pub message_type: StunMessageType,
@@ -160,7 +160,6 @@ pub struct StunMessageBuilder {
     pub transaction_id: Vec<u8>, // 12 bytes
     pub attributes: HashMap<AttributeType, Attribute>,
     pub writer: BufWriter,
-    message_length: usize,
 }
 
 impl StunMessageBuilder {
@@ -188,27 +187,55 @@ impl StunMessageBuilder {
             transaction_id,
             attributes: HashMap::new(),
             writer,
-            message_length: 0,
         }
     }
 
-    pub fn add_attr(mut self, attr_type: AttributeType, value: Vec<u8>) -> Self {
+    pub fn write_message_length(&mut self, message_length: usize) {
+        self.writer.write_u8_at((message_length >> 8) as u8, 2);
+        self.writer.write_u8_at(message_length as u8, 3);
+    }
+
+    pub fn add_attr(mut self, attr_type: AttributeType, value: &[u8]) -> Self {
         self.attributes.insert(
             attr_type,
             Attribute {
                 attribute_type: attr_type,
-                value: value.clone(),
+                value: value.to_vec(),
                 offset_in_message: self.writer.buf_ref().len(),
             },
         );
         self.writer.write_u16(attr_type as u16);
         self.writer.write_u16(value.len() as u16);
         self.writer.write_bytes(&value);
-        self.message_length += 2 + 2 + &value.len();
+        self.write_message_length(self.len());
         self
     }
 
-    pub fn build(self) -> StunMessage {
+    pub fn len(&self) -> usize {
+        self.writer.buf_ref().len()
+    }
+
+    pub fn build(mut self, pwd: String) -> StunMessage {
+        let message_length =
+            self.len() - HEADER_BYTES + ATTRIBUTE_HEADER_BYTES + HMAC_SIGNATURE_BYTES;
+        self.write_message_length(message_length);
+
+        let data = self.writer.buf();
+
+        self = self.add_attr(
+            AttributeType::MessageIntegrity,
+            &hmac_sha(&pwd.as_bytes(), &data[..]),
+        );
+
+        let message_length = self.len() - HEADER_BYTES + ATTRIBUTE_HEADER_BYTES + FINGERPRINT_BYTES;
+        self.write_message_length(message_length);
+        let checksum = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&self.writer.buf());
+
+        self = self.add_attr(
+            AttributeType::Fingerprint,
+            &(checksum ^ FINGERPRINT_XOR_MASK).to_be_bytes(),
+        );
+
         StunMessage {
             message_type: self.message_type,
             transaction_id: self.transaction_id,

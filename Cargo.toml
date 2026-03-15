@@ -7,6 +7,7 @@ edition = "2024"
 aes-gcm = "0.10.3"
 anyhow = "1.0.102"
 axum = "0.8.8"
+crc = "3.4.0"
 hmac = "0.12.1"
 local-ip-address = "0.6.10"
 mini-webrtc-derive = { path = "mini-webrtc-derive" }

@@ -95,6 +95,10 @@ impl BufWriter {
         self.buf.push(value);
     }
 
+    pub fn write_u8_at(&mut self, value: u8, pos: usize) {
+        self.buf[pos] = value;
+    }
+
     pub fn write_u16(&mut self, value: u16) {
         self.buf.push((value >> 8) as u8);
         self.buf.push(value as u8);
