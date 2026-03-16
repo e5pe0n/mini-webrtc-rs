@@ -1,12 +1,20 @@
 use anyhow::{Result, anyhow};
 use crc::{CRC_32_ISO_HDLC, Crc};
-use std::collections::HashMap;
+use rand::RngCore;
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+};
+use tokio::net::UdpSocket;
 
 use mini_webrtc_derive::{FromPrimitive, TryFromPrimitive};
 
-use crate::dtls::{
-    buffer::{BufReader, BufWriter},
-    crypto::hmac_sha,
+use crate::{
+    dtls::{
+        buffer::{BufReader, BufWriter},
+        crypto::hmac_sha,
+    },
+    ice::{generate_ice_pwd, generate_ice_ufrag},
 };
 
 pub const HEADER_BYTES: usize = 20;
@@ -243,4 +251,87 @@ impl StunMessageBuilder {
             raw: self.writer.buf(),
         }
     }
+}
+
+pub struct StunClient {
+    pub to: SocketAddr,
+    ufrag: String,
+    pwd: String,
+}
+
+#[derive(TryFromPrimitive)]
+#[try_from(type = "u8")]
+enum IpFamily {
+    V4 = 0x01,
+    V6 = 0x02,
+}
+
+impl StunClient {
+    pub fn new(to: SocketAddr) -> Self {
+        Self {
+            to,
+            ufrag: generate_ice_ufrag(),
+            pwd: generate_ice_pwd(),
+        }
+    }
+
+    pub async fn binding_request(&self) -> Result<SocketAddr> {
+        let transaction_id = generate_transaction_id();
+        let request = StunMessageBuilder::new(
+            StunMessageType {
+                method: StunMessageMethod::Binding,
+                class: StunMessageClass::Request,
+            },
+            transaction_id.clone(),
+        )
+        .build(self.pwd.clone());
+
+        let socket = UdpSocket::bind("0.0.0.0:0".parse::<SocketAddr>()?).await?;
+        const MAX_DATAGRAM_SIZE: usize = 65_507;
+        socket.connect(&self.to).await?;
+        socket.send(&request.raw).await?;
+        let mut data = vec![0u8; MAX_DATAGRAM_SIZE];
+        let length = socket.recv(&mut data).await?;
+        let data = data[..length].to_vec();
+
+        let mut reader = BufReader::new(&data);
+        let response = StunMessage::decode(&mut reader)?;
+        let xor_mapped_address_attr = response
+            .attributes
+            .get(&AttributeType::XorMappedAddress)
+            .ok_or(anyhow!("xor mapped address attribute not found."))?;
+
+        let xor_mask = {
+            let mut buf = MAGIC_COOKIE.to_be_bytes().to_vec();
+            buf.extend_from_slice(&transaction_id);
+            buf
+        };
+
+        let mut mapped_ip_addr: Vec<u8> = vec![];
+        for i in 0..xor_mapped_address_attr.value.len() - 4 {
+            mapped_ip_addr.push(xor_mapped_address_attr.value[i + 4] ^ xor_mask[i]);
+        }
+        let ip_family = IpFamily::try_from(xor_mapped_address_attr.value[1])?;
+        let xor_port = u16::from_be_bytes(xor_mapped_address_attr.value[2..4].try_into()?);
+        let port = xor_port ^ u16::from_be_bytes(xor_mask[..2].try_into()?);
+
+        let sock_addr = match ip_family {
+            IpFamily::V4 => {
+                let ip = Ipv4Addr::from(<[u8; 4]>::try_from(&mapped_ip_addr[..4])?);
+                SocketAddr::from((ip, port))
+            }
+            IpFamily::V6 => {
+                let ip = Ipv6Addr::from(<[u8; 16]>::try_from(&mapped_ip_addr[..16])?);
+                SocketAddr::from((ip, port))
+            }
+        };
+        Ok(sock_addr)
+    }
+}
+
+fn generate_transaction_id() -> Vec<u8> {
+    let mut rng = rand::rng();
+    let mut transaction_id = [0u8; 12];
+    rng.fill_bytes(&mut transaction_id);
+    transaction_id.into()
 }

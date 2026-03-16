@@ -21,7 +21,6 @@ use crate::stun::{
 };
 use anyhow::{Result, anyhow};
 use rcgen::{CertifiedKey, KeyPair};
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
@@ -42,7 +41,7 @@ impl UdpServer {
         addr: &str,
         certified_key: CertifiedKey<KeyPair>,
         ice_agent: IceAgent,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self> {
         // Bind UDP socket
         let socket = UdpSocket::bind(addr).await?;
         info!("Udp Server listening on {}", addr);
@@ -63,7 +62,7 @@ impl UdpServer {
         self.sequence_number = 0;
     }
 
-    pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(&mut self) -> Result<()> {
         let mut buf = vec![0u8; 65535];
 
         loop {

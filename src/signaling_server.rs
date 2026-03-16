@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Result;
 use axum::{
     Json, Router,
     extract::State,
@@ -24,8 +25,6 @@ pub struct SignalingServer {
 struct AppState {
     ice_agent: Mutex<IceAgent>,
 }
-
-type Return<T> = Result<(StatusCode, Json<T>), (StatusCode, String)>;
 
 #[derive(Deserialize, Serialize)]
 struct SimpleResponse {
@@ -54,7 +53,7 @@ impl SignalingServer {
         Self { app, listener }
     }
 
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(self) -> Result<()> {
         Ok(axum::serve(self.listener, self.app).await?)
     }
 }

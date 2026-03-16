@@ -10,6 +10,21 @@ use crate::{
     },
 };
 
+pub fn generate_ice_ufrag() -> String {
+    let mut rng = rand::rng();
+    let u_frag: String = (0..13)
+        .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
+        .collect();
+    u_frag + "mini"
+}
+
+pub fn generate_ice_pwd() -> String {
+    let mut rng = rand::rng();
+    (0..32)
+        .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct IceCandidate {
     pub ip: IpAddr,
@@ -32,21 +47,11 @@ pub struct IceAgent {
 
 impl IceAgent {
     pub fn new(ice_candidates: Vec<IceCandidate>, fingerprint: Fingerprint) -> Self {
-        let mut rng = rand::rng();
-        let ufrag: String = {
-            let u_frag: String = (0..13)
-                .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
-                .collect();
-            u_frag + "mini"
-        };
-
         Self {
             ice_candidates,
             local_peer: Peer {
-                ufrag,
-                pwd: (0..32)
-                    .map(|_| rng.sample(rand::distr::Alphabetic).to_string())
-                    .collect(),
+                ufrag: generate_ice_ufrag(),
+                pwd: generate_ice_pwd(),
                 fingerprint: fingerprint.to_string(),
             },
             remote_peer: None,
