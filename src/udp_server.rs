@@ -1,18 +1,19 @@
 use crate::dtls::buffer::{BufReader, BufWriter};
-use crate::dtls::common::generate_curve_key_pair;
+use crate::dtls::common::{Cookie, Fingerprint, generate_curve_key_pair};
 use crate::dtls::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
 use crate::dtls::handshake::HandshakeMessage;
 use crate::dtls::handshake::certificate::Certificate;
 use crate::dtls::handshake::certificate_request::CertificateRequest;
 use crate::dtls::handshake::client_hello::ClientHello;
 use crate::dtls::handshake::client_key_exchange::ClientKeyExchange;
-use crate::dtls::handshake::context::{Flight4Context, Flight6Context, HandshakeFlightContext};
+use crate::dtls::handshake::context::HandshakeFlight;
 use crate::dtls::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::dtls::handshake::hello_verify_request::HelloVerifyRequest;
 use crate::dtls::handshake::random::Random;
 use crate::dtls::handshake::server_hello::ServerHello;
 use crate::dtls::handshake::server_hello_done::ServerHelloDone;
 use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
+use crate::dtls::is_dtls_packet;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
 use crate::ice::IceAgent;
 use crate::stun::{
@@ -24,16 +25,20 @@ use rcgen::{CertifiedKey, KeyPair};
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
-use x25519_dalek::PublicKey;
+use x25519_dalek::{EphemeralSecret, PublicKey};
 
 pub struct UdpServer {
     certified_key: CertifiedKey<KeyPair>,
     ice_agent: IceAgent,
     socket: UdpSocket,
-    pub handshake_flight_context: HandshakeFlightContext,
+    pub handshake_flight: HandshakeFlight,
     message_seq: u16,
     sequence_number: u64,
     epoch: u16,
+    cookie: Option<Cookie>,
+    ephemeral_secret: Option<EphemeralSecret>,
+    client_random: Option<Random>,
+    server_random: Option<Random>,
 }
 
 impl UdpServer {
@@ -50,10 +55,14 @@ impl UdpServer {
             certified_key,
             ice_agent,
             socket,
-            handshake_flight_context: HandshakeFlightContext::Flight0,
+            handshake_flight: HandshakeFlight::Flight2,
             message_seq: 0,
             sequence_number: 0,
             epoch: 0,
+            cookie: None,
+            ephemeral_secret: None,
+            client_random: None,
+            server_random: None,
         })
     }
 
@@ -119,6 +128,15 @@ impl UdpServer {
             return self.handle_stun_message(data, peer_addr).await;
         }
 
+        if is_dtls_packet(data) {
+            return self.handle_dtls_packet(data, peer_addr).await;
+        }
+
+        info!("ignored unknown data.");
+        Ok(())
+    }
+
+    async fn handle_dtls_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         let mut reader = BufReader::new(data);
         let record_header = RecordHeader::decode(&mut reader)?;
 
@@ -129,15 +147,14 @@ impl UdpServer {
             ContentType::Alert => debug!("Received Alert from {}", peer_addr),
             ContentType::Handshake => {
                 debug!("Received Handshake from {}", peer_addr);
-                self.handle_handshake(&mut reader, record_header, peer_addr)
-                    .await?;
+                return self
+                    .handle_handshake(&mut reader, record_header, peer_addr)
+                    .await;
             }
             ContentType::ApplicationData => {
                 debug!("Received ApplicationData from {}", peer_addr)
             }
         }
-
-        Ok(())
     }
 
     async fn handle_stun_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
@@ -216,9 +233,10 @@ impl UdpServer {
             HandshakeType::ClientHello => {
                 let client_hello = ClientHello::decode(reader)?;
                 debug!("  -> ClientHello from {}", peer_addr);
-                match &self.handshake_flight_context {
-                    HandshakeFlightContext::Flight0 => {
+                match &self.handshake_flight {
+                    HandshakeFlight::Flight0 => {
                         debug!("  <- Sending HelloVerifyRequest to {}", peer_addr);
+                        // TODO: set CONNECTING to dtls state
 
                         // TODO: negotiate dtls version
                         let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
@@ -232,12 +250,14 @@ impl UdpServer {
 
                         self.socket.send_to(&record_writer.buf(), peer_addr).await?;
 
-                        self.handshake_flight_context =
-                            HandshakeFlightContext::Flight4(Flight4Context::new(cookie));
+                        self.handshake_flight = HandshakeFlight::Flight2;
+                        self.cookie = Some(cookie);
                     }
-                    HandshakeFlightContext::Flight4(context) => {
+                    HandshakeFlight::Flight2 => {
                         let client_random = client_hello.random;
                         let server_random = Random::new();
+
+                        self.handshake_flight = HandshakeFlight::Flight4;
                         {
                             // ServerHello
                             let mut writer = BufWriter::new();
@@ -283,67 +303,64 @@ impl UdpServer {
                             self.encode_handshake_message_record(&mut writer, server_hello_done);
                             self.socket.send_to(writer.buf_ref(), peer_addr).await?;
                         }
-                        let context = Flight6Context {
-                            ephemeral_secret,
-                            client_random,
-                            server_random,
-                        };
+
+                        self.ephemeral_secret = Some(ephemeral_secret);
+                        self.client_random = Some(client_random);
+                        self.server_random = Some(server_random);
                     }
                     _ => warn!(
                         "invalid flight for ClientHello; {:?}",
-                        &self.handshake_flight_context
+                        &self.handshake_flight
                     ),
                 }
             }
             HandshakeType::Certificate => {
                 let client_certificate = Certificate::decode(reader)?;
                 // TODO: get fingerprint of client certificate
-                // TODO: confirm the fingerprint hash matches the one in sdp
+                let fingerprint = Fingerprint::new(&client_certificate.certificates[0]);
+                let remote_peer = self
+                    .ice_agent
+                    .remote_peer
+                    .clone()
+                    .ok_or(anyhow!("no remote peer."))?;
+                if fingerprint.to_string() != remote_peer.fingerprint {
+                    // TODO: set FAILED to dtls state
+                }
             }
             HandshakeType::ClientKeyExchange => {
                 debug!("  -> ClientKeyExchange from {}", peer_addr);
                 let client_key_exchange = ClientKeyExchange::decode(reader)?;
                 let client_public_key = client_key_exchange.public_key;
 
-                // EphemeralSecret doesn't implement Copy and Clone
-                // so we need to take the ownership.
-                match std::mem::replace(
-                    &mut self.handshake_flight_context,
-                    HandshakeFlightContext::Flight0,
-                ) {
-                    HandshakeFlightContext::Flight6(context) => {
-                        let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
-                        let pre_master_secret = context
-                            .ephemeral_secret
-                            .diffie_hellman(&PublicKey::from(client_public_key));
-                        let master_secret = generate_master_secret(
-                            pre_master_secret,
-                            &context.client_random,
-                            &context.server_random,
-                        );
-                        let encryption_keys = generate_encryption_keys(
-                            &master_secret,
-                            &context.client_random,
-                            &context.server_random,
-                        );
-                        let gcm = Gcm::new(
-                            &encryption_keys.server_write_key,
-                            &encryption_keys.server_write_iv,
-                            &encryption_keys.client_write_key,
-                            &encryption_keys.client_write_iv,
-                        );
-                    }
-                    _ => warn!(
-                        "invalid flight for ClientKeyExchange ; {:?}",
-                        &self.handshake_flight_context
-                    ),
-                }
+                let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
+                let pre_master_secret = self
+                    .ephemeral_secret
+                    .take()
+                    .ok_or(anyhow!("ephemeral secret is none."))?
+                    .diffie_hellman(&PublicKey::from(client_public_key));
+                let client_random = self
+                    .client_random
+                    .ok_or(anyhow!("client random is none."))?;
+                let server_random = self
+                    .server_random
+                    .ok_or(anyhow!("server random is none."))?;
+                let master_secret =
+                    generate_master_secret(pre_master_secret, &client_random, &server_random);
+                let encryption_keys =
+                    generate_encryption_keys(&master_secret, &client_random, &server_random);
+                let gcm = Gcm::new(
+                    &encryption_keys.server_write_key,
+                    &encryption_keys.server_write_iv,
+                    &encryption_keys.client_write_key,
+                    &encryption_keys.client_write_iv,
+                );
             }
             HandshakeType::CertificateVerify => {
                 // TODO
             }
             HandshakeType::Finished => {
                 // TODO
+                // TODO: set CONNECTED to dtls state
             }
             _ => warn!(
                 "  -> Unknown handshake type {:?} from {}",

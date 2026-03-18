@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use hmac::digest::generic_array::GenericArray;
-use sha2::digest::generic_array::typenum::U32;
+use sha2::{Digest, Sha256, digest::generic_array::typenum::U32};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use mini_webrtc_derive::FromPrimitive;
@@ -151,6 +151,10 @@ pub fn generate_curve_key_pair() -> CurveKeyPair {
 pub struct Fingerprint(pub GenericArray<u8, U32>);
 
 impl Fingerprint {
+    pub fn new(data: &[u8]) -> Self {
+        Self(Sha256::digest(data))
+    }
+
     pub fn to_string(&self) -> String {
         self.0
             .iter()

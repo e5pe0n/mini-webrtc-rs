@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
 
     // Generate self-signed certificate
     let certified_key = generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let fingerprint = Fingerprint(Sha256::digest(certified_key.cert.der()));
+    let fingerprint = Fingerprint::new(certified_key.cert.der());
 
     let local_ip = local_ip().unwrap();
     info!("local_ip={local_ip:?}");

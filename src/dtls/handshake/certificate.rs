@@ -5,7 +5,7 @@ use crate::dtls::{
 
 #[derive(Debug)]
 pub struct Certificate {
-    certificates: Vec<Vec<u8>>,
+    pub certificates: Vec<Vec<u8>>,
 }
 
 impl Certificate {
