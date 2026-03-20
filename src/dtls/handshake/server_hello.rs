@@ -1,6 +1,7 @@
 use crate::dtls::{
     buffer::BufWriter,
-    common::{CipherSuiteId, CompressionMethodId, SessionId},
+    cipher_suite::CipherSuiteId,
+    common::{CompressionMethodId, SessionId},
     handshake::{HandshakeMessage, header::HandshakeType, random::Random},
     record_header::DtlsVersion,
 };

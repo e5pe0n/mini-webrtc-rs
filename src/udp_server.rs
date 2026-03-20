@@ -1,8 +1,9 @@
 use crate::dtls::buffer::{BufReader, BufWriter};
-use crate::dtls::common::{CipherSuiteId, Cookie, ECCurve, Fingerprint, generate_curve_key_pair};
+use crate::dtls::cipher_suite::CipherSuiteId;
+use crate::dtls::common::{Cookie, ECCurve, Fingerprint, generate_curve_key_pair};
 use crate::dtls::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
+use crate::dtls::extensions::Extension;
 use crate::dtls::extensions::use_srtp::SrtpProtectionProfile;
-use crate::dtls::extensions::{Extension, ExtensionType};
 use crate::dtls::handshake::HandshakeMessage;
 use crate::dtls::handshake::certificate::Certificate;
 use crate::dtls::handshake::certificate_request::CertificateRequest;

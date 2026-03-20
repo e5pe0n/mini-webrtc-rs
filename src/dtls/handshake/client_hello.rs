@@ -3,7 +3,8 @@ use tracing::info;
 
 use crate::dtls::{
     buffer::BufReader,
-    common::{CipherSuiteId, CompressionMethodId, Cookie},
+    cipher_suite::CipherSuiteId,
+    common::{CompressionMethodId, Cookie},
     extensions::{
         Extension, ExtensionType, supported_groups::SupportedGroups,
         use_extended_master_secret::UseExtendedMasterSecret, use_srtp::UseSrtp,

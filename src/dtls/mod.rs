@@ -1,4 +1,5 @@
 pub mod buffer;
+pub mod cipher_suite;
 pub mod common;
 pub mod crypto;
 pub mod extensions;
