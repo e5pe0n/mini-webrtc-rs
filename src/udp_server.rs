@@ -390,10 +390,12 @@ impl UdpServer {
             }
             HandshakeType::ClientKeyExchange => {
                 debug!("  -> ClientKeyExchange from {}", peer_addr);
-                let client_key_exchange = ClientKeyExchange::decode(reader)?;
-                let client_public_key = client_key_exchange.public_key;
+                let message = ClientKeyExchange::decode(reader)?;
+                let client_public_key = message.public_key;
 
-                let client_public_key: [u8; 32] = client_public_key.try_into().unwrap();
+                let client_public_key: [u8; 32] = client_public_key
+                    .try_into()
+                    .or(Err(anyhow!("failed to convert vec into array.")))?;
                 let pre_master_secret = self
                     .ephemeral_secret
                     .take()
@@ -405,16 +407,23 @@ impl UdpServer {
                 let server_random = self
                     .server_random
                     .ok_or(anyhow!("server random is none."))?;
-                let master_secret =
-                    generate_master_secret(pre_master_secret, &client_random, &server_random);
-                let encryption_keys =
-                    generate_encryption_keys(&master_secret, &client_random, &server_random);
-                let gcm = Gcm::new(
-                    &encryption_keys.server_write_key,
-                    &encryption_keys.server_write_iv,
-                    &encryption_keys.client_write_key,
-                    &encryption_keys.client_write_iv,
-                );
+
+                if self.use_extended_master_secret {
+                    // TODO
+                    // - concatenate handshake messages
+                    // - generate extended master secret
+                } else {
+                    let master_secret =
+                        generate_master_secret(pre_master_secret, &client_random, &server_random);
+                    let encryption_keys =
+                        generate_encryption_keys(&master_secret, &client_random, &server_random);
+                    let gcm = Gcm::new(
+                        &encryption_keys.server_write_key,
+                        &encryption_keys.server_write_iv,
+                        &encryption_keys.client_write_key,
+                        &encryption_keys.client_write_iv,
+                    );
+                }
             }
             HandshakeType::CertificateVerify => {
                 let message = CertificateVerify::decode(reader)?;
