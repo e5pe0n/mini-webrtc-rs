@@ -1,5 +1,5 @@
 use crate::dtls::buffer::{BufReader, BufWriter};
-use crate::dtls::common::{Cookie, Fingerprint, generate_curve_key_pair};
+use crate::dtls::common::{CipherSuiteId, Cookie, Fingerprint, generate_curve_key_pair};
 use crate::dtls::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
 use crate::dtls::handshake::HandshakeMessage;
 use crate::dtls::handshake::certificate::Certificate;
@@ -36,6 +36,7 @@ pub struct UdpServer {
     sequence_number: u64,
     epoch: u16,
     cookie: Option<Cookie>,
+    cipher_suite_id: Option<CipherSuiteId>,
     ephemeral_secret: Option<EphemeralSecret>,
     client_random: Option<Random>,
     server_random: Option<Random>,
@@ -254,6 +255,21 @@ impl UdpServer {
                         self.cookie = Some(cookie);
                     }
                     HandshakeFlight::Flight2 => {
+                        if client_hello.cookie
+                            != self.cookie.clone().ok_or(anyhow!("cookie is none."))?
+                        {
+                            // TODO: set FAILED to dtls state
+                        }
+                        // TODO: negotiate cipher suite
+                        if !client_hello
+                            .cipher_suite_ids
+                            .contains(&CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256)
+                        {
+                            // TODO: set FAILED to dtls state
+                        }
+                        self.cipher_suite_id =
+                            Some(CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256);
+
                         let client_random = client_hello.random;
                         let server_random = Random::new();
 

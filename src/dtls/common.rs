@@ -7,7 +7,7 @@ use mini_webrtc_derive::FromPrimitive;
 
 use crate::dtls::buffer::BufWriter;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cookie(pub Vec<u8>); // 20 bytes
 
 impl Cookie {
