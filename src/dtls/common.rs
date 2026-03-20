@@ -73,11 +73,12 @@ impl From<ECCurve> for u16 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[from(type = "u8", default = "Unsupported")]
 pub enum HashAlgorithm {
     // https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4.1
     Sha256 = 4,
-    // Unsupported,
+    Unsupported = 255,
 }
 
 impl From<HashAlgorithm> for u8 {
@@ -86,11 +87,12 @@ impl From<HashAlgorithm> for u8 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[from(type = "u8", default = "Unsupported")]
 pub enum SignatureAlgorithm {
     // https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4.1
     Ecdsa = 3,
-    // Unsupported,
+    Unsupported = 255,
 }
 
 impl From<SignatureAlgorithm> for u8 {

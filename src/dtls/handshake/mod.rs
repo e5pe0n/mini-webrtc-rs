@@ -2,6 +2,7 @@ use crate::dtls::{buffer::BufWriter, handshake::header::HandshakeType};
 
 pub mod certificate;
 pub mod certificate_request;
+pub mod certificate_verify;
 pub mod client_hello;
 pub mod client_key_exchange;
 pub mod context;

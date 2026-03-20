@@ -1,12 +1,15 @@
 use crate::dtls::buffer::{BufReader, BufWriter};
 use crate::dtls::cipher_suite::CipherSuiteId;
-use crate::dtls::common::{Cookie, ECCurve, Fingerprint, generate_curve_key_pair};
+use crate::dtls::common::{
+    Cookie, ECCurve, Fingerprint, HashAlgorithm, SignatureAlgorithm, generate_curve_key_pair,
+};
 use crate::dtls::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
 use crate::dtls::extensions::Extension;
 use crate::dtls::extensions::use_srtp::SrtpProtectionProfile;
 use crate::dtls::handshake::HandshakeMessage;
 use crate::dtls::handshake::certificate::Certificate;
 use crate::dtls::handshake::certificate_request::CertificateRequest;
+use crate::dtls::handshake::certificate_verify::CertificateVerify;
 use crate::dtls::handshake::client_hello::ClientHello;
 use crate::dtls::handshake::client_key_exchange::ClientKeyExchange;
 use crate::dtls::handshake::context::HandshakeFlight;
@@ -414,7 +417,21 @@ impl UdpServer {
                 );
             }
             HandshakeType::CertificateVerify => {
+                let message = CertificateVerify::decode(reader)?;
+                if message.algo_pair.hash != HashAlgorithm::Sha256 {
+                    warn!("unsupported hash algo; {:?}", message.algo_pair.hash);
+                    // set dtls state to FAILED
+                }
+                if message.algo_pair.signature != SignatureAlgorithm::Ecdsa {
+                    warn!(
+                        "unsupported signature algo; {:?}",
+                        message.algo_pair.signature
+                    );
+                    // set dtls state to FAILED
+                }
                 // TODO
+                // - concatenate handshake messages
+                // - verify certificate
             }
             HandshakeType::Finished => {
                 // TODO
