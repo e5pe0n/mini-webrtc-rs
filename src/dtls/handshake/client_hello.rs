@@ -6,7 +6,7 @@ use tracing::info;
 use crate::dtls::{
     buffer::BufReader,
     common::{CipherSuiteId, CompressionMethodId, Cookie},
-    extensions::{Extension, ExtensionType, use_srtp::UseSrtp},
+    extensions::{Extension, ExtensionType, supported_groups::SupportedGroups, use_srtp::UseSrtp},
     handshake::random::Random,
     record_header::DtlsVersion,
 };
@@ -55,24 +55,27 @@ impl ClientHello {
         let mut extensions: HashMap<ExtensionType, Box<dyn Extension>> = HashMap::new();
         let extension_map_length = reader.read_u16()? as usize;
         let extensions_offset = reader.pos;
-        loop {
+        while reader.pos - extensions_offset < extension_map_length {
             let extension_type = ExtensionType::from(reader.read_u16()?);
-            let extension_length = reader.read_u16()?;
-            let mut extension_value = vec![0u8; extension_length as usize];
-            reader.read_exact(&mut extension_value);
-            match extension_type {
-                ExtensionType::UseSrtp => {
-                    let extension = UseSrtp::decode(reader)?;
-                    extensions.insert(extension_type, Box::new(extension));
+            let extension_length = reader.read_u16()? as usize;
+            let mut extension_data = vec![0u8; extension_length];
+            reader.read_exact(&mut extension_data)?;
+
+            let extension: Box<dyn Extension> = {
+                let mut extension_reader = BufReader::new(&extension_data);
+                match extension_type {
+                    ExtensionType::UseSrtp => Box::new(UseSrtp::decode(&mut extension_reader)?),
+                    ExtensionType::SupportedGroups => {
+                        Box::new(SupportedGroups::decode(&mut extension_reader)?)
+                    }
+                    _ => {
+                        info!("ignore unsupported extension; {extension_type:?}");
+                        continue;
+                    }
                 }
-                _ => {
-                    info!("ignore unsupported extension; {extension_type:?}");
-                    continue;
-                }
-            }
-            if reader.pos - extensions_offset >= extension_map_length {
-                break;
-            }
+            };
+
+            extensions.insert(extension_type, extension);
         }
 
         Ok(Self {

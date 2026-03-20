@@ -73,7 +73,8 @@ impl From<ECCurveType> for u8 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[from(type = "u16", default = "Unsupported")]
 pub enum ECCurve {
     Unsupported = 0x0000,
     X25519 = 0x001d,
