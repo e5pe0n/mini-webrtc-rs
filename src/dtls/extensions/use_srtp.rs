@@ -1,12 +1,10 @@
 use anyhow::Result;
 use mini_webrtc_derive::FromPrimitive;
 
-use crate::dtls::{
-    buffer::BufReader,
-    extensions::{Extension, ExtensionType},
-};
+use crate::dtls::buffer::BufReader;
 
 // https://datatracker.ietf.org/doc/html/rfc5764
+#[derive(Debug)]
 pub struct UseSrtp {
     pub srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub srtp_mki: Vec<u8>, // master key identifier
@@ -28,12 +26,6 @@ impl UseSrtp {
             srtp_protection_profiles: profiles,
             srtp_mki: mki.to_vec(),
         })
-    }
-}
-
-impl Extension for UseSrtp {
-    fn get_extension_type(&self) -> ExtensionType {
-        ExtensionType::UseSrtp
     }
 }
 

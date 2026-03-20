@@ -1,6 +1,8 @@
 use crate::dtls::buffer::{BufReader, BufWriter};
-use crate::dtls::common::{CipherSuiteId, Cookie, Fingerprint, generate_curve_key_pair};
+use crate::dtls::common::{CipherSuiteId, Cookie, ECCurve, Fingerprint, generate_curve_key_pair};
 use crate::dtls::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
+use crate::dtls::extensions::use_srtp::SrtpProtectionProfile;
+use crate::dtls::extensions::{Extension, ExtensionType};
 use crate::dtls::handshake::HandshakeMessage;
 use crate::dtls::handshake::certificate::Certificate;
 use crate::dtls::handshake::certificate_request::CertificateRequest;
@@ -37,6 +39,9 @@ pub struct UdpServer {
     epoch: u16,
     cookie: Option<Cookie>,
     cipher_suite_id: Option<CipherSuiteId>,
+    curve: Option<ECCurve>,
+    srtp_protection_profile: Option<SrtpProtectionProfile>,
+    use_extended_master_secret: bool,
     ephemeral_secret: Option<EphemeralSecret>,
     client_random: Option<Random>,
     server_random: Option<Random>,
@@ -62,6 +67,9 @@ impl UdpServer {
             epoch: 0,
             cookie: None,
             cipher_suite_id: None,
+            curve: None,
+            srtp_protection_profile: None,
+            use_extended_master_secret: false,
             ephemeral_secret: None,
             client_random: None,
             server_random: None,
@@ -272,6 +280,37 @@ impl UdpServer {
                             Some(CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256);
 
                         // TODO: handle extensions
+                        for extension in client_hello.extensions {
+                            match extension {
+                                Extension::SupportedGroups(value) => {
+                                    let curve = value
+                                        .curves
+                                        .iter()
+                                        // TODO: negotiate curve
+                                        .find(|curve| **curve == ECCurve::X25519)
+                                        .ok_or(anyhow!("ECCurve::X25519 not found."))?;
+                                    self.curve = Some(*curve);
+                                }
+                                Extension::UseSrtp(value) => {
+                                    let profile = value
+                                        .srtp_protection_profiles
+                                        .iter()
+                                        .find(|profile| {
+                                            **profile == SrtpProtectionProfile::SrtpAeadAes128Gcm
+                                        })
+                                        .ok_or(anyhow!(
+                                            "SrtpProtectionProfile::SrtpAeadAes128Gcm not found."
+                                        ))?;
+                                    self.srtp_protection_profile = Some(*profile);
+                                }
+                                Extension::UseExtendedMasterSecret(_) => {
+                                    self.use_extended_master_secret = true;
+                                }
+                                _ => {
+                                    info!("ignore unsupported extension; {extension:?}.");
+                                }
+                            }
+                        }
 
                         let client_random = client_hello.random;
                         let server_random = Random::new();
@@ -335,7 +374,6 @@ impl UdpServer {
             }
             HandshakeType::Certificate => {
                 let client_certificate = Certificate::decode(reader)?;
-                // TODO: get fingerprint of client certificate
                 let fingerprint = Fingerprint::new(&client_certificate.certificates[0]);
                 let remote_peer = self
                     .ice_agent

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use tracing::info;
 
@@ -21,7 +19,7 @@ pub struct ClientHello {
     pub cookie: Cookie,
     pub cipher_suite_ids: Vec<CipherSuiteId>,
     pub compression_method_ids: Vec<CompressionMethodId>,
-    // extensions: Vec<Extension>,
+    pub extensions: Vec<Extension>,
 }
 
 impl ClientHello {
@@ -55,7 +53,7 @@ impl ClientHello {
         }
 
         // TODO: decode extensions
-        let mut extensions: HashMap<ExtensionType, Box<dyn Extension>> = HashMap::new();
+        let mut extensions: Vec<Extension> = vec![];
         let extension_map_length = reader.read_u16()? as usize;
         let extensions_offset = reader.pos;
         while reader.pos - extensions_offset < extension_map_length {
@@ -64,16 +62,18 @@ impl ClientHello {
             let mut extension_data = vec![0u8; extension_length];
             reader.read_exact(&mut extension_data)?;
 
-            let extension: Box<dyn Extension> = {
+            let extension: Extension = {
                 let mut extension_reader = BufReader::new(&extension_data);
                 match extension_type {
-                    ExtensionType::UseSrtp => Box::new(UseSrtp::decode(&mut extension_reader)?),
+                    ExtensionType::UseSrtp => {
+                        Extension::UseSrtp(UseSrtp::decode(&mut extension_reader)?)
+                    }
                     ExtensionType::SupportedGroups => {
-                        Box::new(SupportedGroups::decode(&mut extension_reader)?)
+                        Extension::SupportedGroups(SupportedGroups::decode(&mut extension_reader)?)
                     }
-                    ExtensionType::UseExtendedMasterSecret => {
-                        Box::new(UseExtendedMasterSecret::decode(extension_reader)?)
-                    }
+                    ExtensionType::UseExtendedMasterSecret => Extension::UseExtendedMasterSecret(
+                        UseExtendedMasterSecret::decode(extension_reader)?,
+                    ),
                     _ => {
                         info!("ignore unsupported extension; {extension_type:?}");
                         continue;
@@ -81,7 +81,7 @@ impl ClientHello {
                 }
             };
 
-            extensions.insert(extension_type, extension);
+            extensions.push(extension);
         }
 
         Ok(Self {
@@ -91,6 +91,7 @@ impl ClientHello {
             cookie: Cookie::try_from(cookie_buf)?,
             cipher_suite_ids,
             compression_method_ids,
+            extensions,
         })
     }
 }
