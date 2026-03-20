@@ -1,8 +1,12 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
+use tracing::info;
 
 use crate::dtls::{
     buffer::BufReader,
     common::{CipherSuiteId, CompressionMethodId, Cookie},
+    extensions::{ExtensionType, UseSrtp},
     handshake::random::Random,
     record_header::DtlsVersion,
 };
@@ -48,6 +52,25 @@ impl ClientHello {
         }
 
         // TODO: decode extensions
+        let extensions: HashMap<ExtensionType, Extension> = HashMap::new();
+        let extension_map_length = reader.read_u16()?;
+        loop {
+            let extension_type = ExtensionType::from(reader.read_u16()?);
+            let extension_length = reader.read_u16()?;
+            let mut extension_value = [0u8; extension_length as usize];
+            reader.read_exact(&mut extension_value);
+            match extension_type {
+                ExtensionType::UseSrtp => {
+                    let extension = UseSrtp::decode(
+
+                    )
+                }
+                _ => {
+                    info!("ignore unsupported extension; {extension_type:?}");
+                    continue;
+                }
+            }
+        }
 
         Ok(Self {
             version,
