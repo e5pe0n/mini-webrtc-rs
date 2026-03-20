@@ -1,4 +1,5 @@
 pub mod supported_groups;
+pub mod use_extended_master_secret;
 pub mod use_srtp;
 
 use mini_webrtc_derive::FromPrimitive;

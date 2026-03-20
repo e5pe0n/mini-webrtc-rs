@@ -6,7 +6,10 @@ use tracing::info;
 use crate::dtls::{
     buffer::BufReader,
     common::{CipherSuiteId, CompressionMethodId, Cookie},
-    extensions::{Extension, ExtensionType, supported_groups::SupportedGroups, use_srtp::UseSrtp},
+    extensions::{
+        Extension, ExtensionType, supported_groups::SupportedGroups,
+        use_extended_master_secret::UseExtendedMasterSecret, use_srtp::UseSrtp,
+    },
     handshake::random::Random,
     record_header::DtlsVersion,
 };
@@ -67,6 +70,9 @@ impl ClientHello {
                     ExtensionType::UseSrtp => Box::new(UseSrtp::decode(&mut extension_reader)?),
                     ExtensionType::SupportedGroups => {
                         Box::new(SupportedGroups::decode(&mut extension_reader)?)
+                    }
+                    ExtensionType::UseExtendedMasterSecret => {
+                        Box::new(UseExtendedMasterSecret::decode(extension_reader)?)
                     }
                     _ => {
                         info!("ignore unsupported extension; {extension_type:?}");
