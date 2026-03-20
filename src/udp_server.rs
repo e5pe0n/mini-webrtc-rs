@@ -61,6 +61,7 @@ impl UdpServer {
             sequence_number: 0,
             epoch: 0,
             cookie: None,
+            cipher_suite_id: None,
             ephemeral_secret: None,
             client_random: None,
             server_random: None,
@@ -269,6 +270,8 @@ impl UdpServer {
                         }
                         self.cipher_suite_id =
                             Some(CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256);
+
+                        // TODO: handle extensions
 
                         let client_random = client_hello.random;
                         let server_random = Random::new();

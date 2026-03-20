@@ -1,13 +1,13 @@
-mod use_srtp;
+pub mod use_srtp;
 
 use mini_webrtc_derive::FromPrimitive;
 
 // https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive, Hash)]
 #[from(type = "u16", default = "Unsupported")]
 pub enum ExtensionType {
     ServerName = 0,
-    SupportedEllipticCurves = 10,
+    SupportedGroups = 10, // renamed from "elliptic_curves"
     SupportedPointFormats = 11,
     SupportedSignatureAlgorithms = 13,
     UseSrtp = 14,
@@ -15,4 +15,8 @@ pub enum ExtensionType {
     UseExtendedMasterSecret = 23,
     RenegotiationInfo = 65281,
     Unsupported = 65535,
+}
+
+pub trait Extension {
+    fn get_extension_type(&self) -> ExtensionType;
 }
