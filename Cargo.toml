@@ -11,6 +11,7 @@ crc = "3.4.0"
 hmac = "0.12.1"
 local-ip-address = "0.6.10"
 mini-webrtc-derive = { path = "mini-webrtc-derive" }
+p256 = "0.13.2"
 rand = { version= "0.9.2", features = ["thread_rng"] }
 rcgen = "0.14.6"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -20,3 +21,4 @@ tokio = { version = "1.49.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
 x25519-dalek = { version = "2.0.1", features = ["getrandom"] }
+x509-parser = "0.18.1"

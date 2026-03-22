@@ -29,11 +29,14 @@ use crate::stun::{
     StunMessageClass, StunMessageMethod, StunMessageType,
 };
 use anyhow::{Result, anyhow};
+use p256::ecdsa::signature::hazmat::PrehashVerifier;
+use p256::ecdsa::{Signature, VerifyingKey};
 use rcgen::{CertifiedKey, KeyPair};
 use sha2::{Digest, Sha256};
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
+use x509_parser::parse_x509_certificate;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 pub struct UdpServer {
@@ -53,6 +56,7 @@ pub struct UdpServer {
     ephemeral_secret: Option<EphemeralSecret>,
     client_random: Option<Random>,
     server_random: Option<Random>,
+    client_certificate: Option<Vec<u8>>,
 }
 
 impl UdpServer {
@@ -82,6 +86,7 @@ impl UdpServer {
             ephemeral_secret: None,
             client_random: None,
             server_random: None,
+            client_certificate: None,
         })
     }
 
@@ -101,41 +106,6 @@ impl UdpServer {
             // Parse DTLS handshake message
             self.handle_message(&buf[..len], peer_addr).await?;
         }
-    }
-
-    fn encode_handshake_message_record(
-        &mut self,
-        writer: &mut BufWriter,
-        handshake_message: impl HandshakeMessage,
-    ) {
-        let mut payload_writer = BufWriter::new();
-        handshake_message.encode(&mut payload_writer);
-        let payload = payload_writer.buf();
-
-        // Create Handshake Header
-        let mut handshake_writer = BufWriter::new();
-        let handshake_header = HandshakeHeader::new(
-            handshake_message.get_handshake_type(),
-            payload.len() as u32,
-            self.message_seq,
-            0,
-            payload.len() as u32,
-        );
-        self.message_seq += 1;
-        handshake_header.encode(&mut handshake_writer);
-        handshake_writer.write_bytes(&payload);
-        let handshake_message = handshake_writer.buf();
-
-        // Create Record Header
-        let record_header = RecordHeader::new(
-            ContentType::Handshake,
-            DtlsVersion::new(1, 2),
-            0,
-            self.sequence_number,
-            handshake_message.len() as u16,
-        );
-        record_header.encode(writer);
-        writer.write_bytes(&handshake_message);
     }
 
     async fn handle_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
@@ -240,9 +210,46 @@ impl UdpServer {
         Ok(())
     }
 
-    async fn send_handshake_message(&mut self, buf: &[u8], peer_addr: SocketAddr) -> Result<()> {
-        self.socket.send_to(buf, peer_addr).await?;
-        self.handshake_messages.push(buf.to_vec());
+    async fn send_handshake_message(
+        &mut self,
+        handshake_message: impl HandshakeMessage,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let mut payload_writer = BufWriter::new();
+        handshake_message.encode(&mut payload_writer);
+        let payload = payload_writer.buf();
+
+        // Create Handshake Header
+        let mut handshake_writer = BufWriter::new();
+        let handshake_header = HandshakeHeader::new(
+            handshake_message.get_handshake_type(),
+            payload.len() as u32,
+            self.message_seq,
+            0,
+            payload.len() as u32,
+        );
+        self.message_seq += 1;
+        handshake_header.encode(&mut handshake_writer);
+        handshake_writer.write_bytes(&payload);
+        let handshake_message = handshake_writer.buf();
+
+        // Create Record Header
+        let record_header = RecordHeader::new(
+            ContentType::Handshake,
+            DtlsVersion::new(1, 2),
+            0,
+            self.sequence_number,
+            handshake_message.len() as u16,
+        );
+
+        let mut writer = BufWriter::new();
+        record_header.encode(&mut writer);
+        writer.write_bytes(&handshake_message);
+
+        self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
+
+        // only handshake message part; exclude record header
+        self.handshake_messages.push(handshake_message);
         Ok(())
     }
 
@@ -254,7 +261,9 @@ impl UdpServer {
     ) -> Result<()> {
         let handshake_header = HandshakeHeader::decode(reader)?;
 
-        self.handshake_messages.push(reader.buf.to_vec());
+        // only handshake message part; exclude record header
+        self.handshake_messages
+            .push(reader.buf[reader.pos..].to_vec());
 
         match handshake_header.handshake_type {
             HandshakeType::ClientHello => {
@@ -269,10 +278,7 @@ impl UdpServer {
                         let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
                         let cookie = hello_verify_request.cookie.clone();
 
-                        let mut writer = BufWriter::new();
-                        self.encode_handshake_message_record(&mut writer, hello_verify_request);
-
-                        self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                        self.send_handshake_message(hello_verify_request, peer_addr)
                             .await?;
 
                         self.handshake_flight = HandshakeFlight::Flight2;
@@ -333,25 +339,19 @@ impl UdpServer {
                         self.handshake_flight = HandshakeFlight::Flight4;
                         {
                             // ServerHello
-                            let mut writer = BufWriter::new();
                             // TODO: negotiate dtls version
                             let server_hello =
                                 ServerHello::new(DtlsVersion::new(1, 2), server_random.clone());
-                            self.encode_handshake_message_record(&mut writer, server_hello);
-                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
-                                .await?;
+                            self.send_handshake_message(server_hello, peer_addr).await?;
                         }
                         {
                             // Server Certificate
-                            let mut writer = BufWriter::new();
                             let certificate =
                                 Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
-                            self.encode_handshake_message_record(&mut writer, certificate);
-                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                            self.send_handshake_message(certificate, peer_addr).await?;
                         }
                         let ephemeral_secret = {
                             // ServerKeyExchange
-                            let mut writer = BufWriter::new();
                             let curve_key_pair = generate_curve_key_pair();
                             let server_key_exchange = ServerKeyExchange::new(
                                 curve_key_pair.public_key,
@@ -359,25 +359,20 @@ impl UdpServer {
                                 &client_random,
                                 &server_random,
                             );
-                            self.encode_handshake_message_record(&mut writer, server_key_exchange);
-                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                            self.send_handshake_message(server_key_exchange, peer_addr)
                                 .await?;
                             curve_key_pair.secret
                         };
                         {
                             // Certificate Request
-                            let mut writer = BufWriter::new();
                             let certificate_request = CertificateRequest::new();
-                            self.encode_handshake_message_record(&mut writer, certificate_request);
-                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                            self.send_handshake_message(certificate_request, peer_addr)
                                 .await?;
                         }
                         {
                             // ServerHelloDone
-                            let mut writer = BufWriter::new();
                             let server_hello_done = ServerHelloDone::new();
-                            self.encode_handshake_message_record(&mut writer, server_hello_done);
-                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                            self.send_handshake_message(server_hello_done, peer_addr)
                                 .await?;
                         }
 
@@ -392,8 +387,9 @@ impl UdpServer {
                 }
             }
             HandshakeType::Certificate => {
-                let client_certificate = Certificate::decode(reader)?;
-                let fingerprint = Fingerprint::new(&client_certificate.certificates[0]);
+                let message = Certificate::decode(reader)?;
+                let cert = &message.certificates[0];
+                let fingerprint = Fingerprint::new(cert);
                 let remote_peer = self
                     .ice_agent
                     .remote_peer
@@ -402,6 +398,7 @@ impl UdpServer {
                 if fingerprint.to_string() != remote_peer.fingerprint {
                     // TODO: set FAILED to dtls state
                 }
+                self.client_certificate = Some(cert.clone());
             }
             HandshakeType::ClientKeyExchange => {
                 debug!("  -> ClientKeyExchange from {}", peer_addr);
@@ -453,9 +450,16 @@ impl UdpServer {
                     );
                     // set dtls state to FAILED
                 }
-                // TODO
-                // - concatenate handshake messages
-                // - verify certificate
+                let handshake_messages = self.handshake_messages.concat();
+                let handshake_hash = Sha256::digest(handshake_messages);
+                let client_certificate = self
+                    .client_certificate
+                    .clone()
+                    .ok_or(anyhow!("client certificate is none."))?;
+                let (_, x509) = x509_parser::parse_x509_certificate(&client_certificate)?;
+                let verifying_key = VerifyingKey::from_sec1_bytes(x509.public_key().raw)?;
+                let signature = Signature::from_der(&message.signature)?;
+                verifying_key.verify_prehash(&handshake_hash, &signature)?;
             }
             HandshakeType::Finished => {
                 // TODO
