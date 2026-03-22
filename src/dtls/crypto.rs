@@ -1,5 +1,8 @@
 use aes_gcm::{Aes128Gcm, Key, KeyInit};
-use hmac::{Hmac, Mac};
+use hmac::{
+    Hmac, Mac,
+    digest::{consts::U32, generic_array::GenericArray},
+};
 use sha2::Sha256;
 use x25519_dalek::SharedSecret;
 
@@ -7,6 +10,7 @@ use crate::dtls::handshake::random::Random;
 
 type HmacSha256 = Hmac<Sha256>;
 
+const PRF_EXTENDED_MASTER_SECRET_LABEL: &str = "extended master secret";
 const PRF_MASTER_SECRET_LABEL: &str = "master secret";
 const PRF_KEY_EXPANSION_LABEL: &str = "key expansion";
 
@@ -34,15 +38,31 @@ fn prf_p_hash(secret: &[u8], seed: &[u8], requested_bytes: usize) -> Vec<u8> {
     out[..requested_bytes].to_vec()
 }
 
+// https://datatracker.ietf.org/doc/html/rfc7627#autoid-4
+pub fn generate_extended_master_secret(
+    pre_master_secret: SharedSecret,
+    handshake_hash: GenericArray<u8, U32>,
+) -> Vec<u8> {
+    let seed = vec![
+        PRF_EXTENDED_MASTER_SECRET_LABEL.as_bytes().to_vec(),
+        handshake_hash.to_vec(),
+    ]
+    .concat();
+    prf_p_hash(pre_master_secret.as_bytes(), &seed, 48)
+}
+
 // https://datatracker.ietf.org/doc/html/rfc5246#section-8.1
 pub fn generate_master_secret(
     pre_master_secret: SharedSecret,
     client_random: &Random,
     server_random: &Random,
 ) -> Vec<u8> {
-    let mut seed = PRF_MASTER_SECRET_LABEL.as_bytes().to_vec();
-    seed.extend_from_slice(&client_random.to_bytes());
-    seed.extend_from_slice(&server_random.to_bytes());
+    let seed = vec![
+        PRF_MASTER_SECRET_LABEL.as_bytes().to_vec(),
+        client_random.to_bytes().to_vec(),
+        server_random.to_bytes().to_vec(),
+    ]
+    .concat();
     prf_p_hash(pre_master_secret.as_bytes(), &seed, 48)
 }
 

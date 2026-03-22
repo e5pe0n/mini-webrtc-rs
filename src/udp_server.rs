@@ -3,7 +3,9 @@ use crate::dtls::cipher_suite::CipherSuiteId;
 use crate::dtls::common::{
     Cookie, ECCurve, Fingerprint, HashAlgorithm, SignatureAlgorithm, generate_curve_key_pair,
 };
-use crate::dtls::crypto::{Gcm, generate_encryption_keys, generate_master_secret};
+use crate::dtls::crypto::{
+    Gcm, generate_encryption_keys, generate_extended_master_secret, generate_master_secret,
+};
 use crate::dtls::extensions::Extension;
 use crate::dtls::extensions::use_srtp::SrtpProtectionProfile;
 use crate::dtls::handshake::HandshakeMessage;
@@ -28,6 +30,7 @@ use crate::stun::{
 };
 use anyhow::{Result, anyhow};
 use rcgen::{CertifiedKey, KeyPair};
+use sha2::{Digest, Sha256};
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
@@ -42,6 +45,7 @@ pub struct UdpServer {
     sequence_number: u64,
     epoch: u16,
     cookie: Option<Cookie>,
+    handshake_messages: Vec<Vec<u8>>,
     cipher_suite_id: Option<CipherSuiteId>,
     curve: Option<ECCurve>,
     srtp_protection_profile: Option<SrtpProtectionProfile>,
@@ -70,6 +74,7 @@ impl UdpServer {
             sequence_number: 0,
             epoch: 0,
             cookie: None,
+            handshake_messages: vec![],
             cipher_suite_id: None,
             curve: None,
             srtp_protection_profile: None,
@@ -235,6 +240,12 @@ impl UdpServer {
         Ok(())
     }
 
+    async fn send_handshake_message(&mut self, buf: &[u8], peer_addr: SocketAddr) -> Result<()> {
+        self.socket.send_to(buf, peer_addr).await?;
+        self.handshake_messages.push(buf.to_vec());
+        Ok(())
+    }
+
     async fn handle_handshake(
         &mut self,
         reader: &'_ mut BufReader<'_>,
@@ -243,9 +254,11 @@ impl UdpServer {
     ) -> Result<()> {
         let handshake_header = HandshakeHeader::decode(reader)?;
 
+        self.handshake_messages.push(reader.buf.to_vec());
+
         match handshake_header.handshake_type {
             HandshakeType::ClientHello => {
-                let client_hello = ClientHello::decode(reader)?;
+                let message = ClientHello::decode(reader)?;
                 debug!("  -> ClientHello from {}", peer_addr);
                 match &self.handshake_flight {
                     HandshakeFlight::Flight0 => {
@@ -256,25 +269,23 @@ impl UdpServer {
                         let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
                         let cookie = hello_verify_request.cookie.clone();
 
-                        let mut record_writer = BufWriter::new();
-                        self.encode_handshake_message_record(
-                            &mut record_writer,
-                            hello_verify_request,
-                        );
+                        let mut writer = BufWriter::new();
+                        self.encode_handshake_message_record(&mut writer, hello_verify_request);
 
-                        self.socket.send_to(&record_writer.buf(), peer_addr).await?;
+                        self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                            .await?;
 
                         self.handshake_flight = HandshakeFlight::Flight2;
                         self.cookie = Some(cookie);
                     }
                     HandshakeFlight::Flight2 => {
-                        if client_hello.cookie
+                        if message.cookie
                             != self.cookie.clone().ok_or(anyhow!("cookie is none."))?
                         {
                             // TODO: set FAILED to dtls state
                         }
                         // TODO: negotiate cipher suite
-                        if !client_hello
+                        if !message
                             .cipher_suite_ids
                             .contains(&CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256)
                         {
@@ -284,7 +295,7 @@ impl UdpServer {
                             Some(CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256);
 
                         // TODO: handle extensions
-                        for extension in client_hello.extensions {
+                        for extension in message.extensions {
                             match extension {
                                 Extension::SupportedGroups(value) => {
                                     let curve = value
@@ -316,7 +327,7 @@ impl UdpServer {
                             }
                         }
 
-                        let client_random = client_hello.random;
+                        let client_random = message.random;
                         let server_random = Random::new();
 
                         self.handshake_flight = HandshakeFlight::Flight4;
@@ -327,7 +338,8 @@ impl UdpServer {
                             let server_hello =
                                 ServerHello::new(DtlsVersion::new(1, 2), server_random.clone());
                             self.encode_handshake_message_record(&mut writer, server_hello);
-                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                                .await?;
                         }
                         {
                             // Server Certificate
@@ -348,7 +360,8 @@ impl UdpServer {
                                 &server_random,
                             );
                             self.encode_handshake_message_record(&mut writer, server_key_exchange);
-                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                                .await?;
                             curve_key_pair.secret
                         };
                         {
@@ -356,14 +369,16 @@ impl UdpServer {
                             let mut writer = BufWriter::new();
                             let certificate_request = CertificateRequest::new();
                             self.encode_handshake_message_record(&mut writer, certificate_request);
-                            self.socket.send_to(&writer.buf(), peer_addr).await?;
+                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                                .await?;
                         }
                         {
                             // ServerHelloDone
                             let mut writer = BufWriter::new();
                             let server_hello_done = ServerHelloDone::new();
                             self.encode_handshake_message_record(&mut writer, server_hello_done);
-                            self.socket.send_to(writer.buf_ref(), peer_addr).await?;
+                            self.send_handshake_message(&writer.buf_ref(), peer_addr)
+                                .await?;
                         }
 
                         self.ephemeral_secret = Some(ephemeral_secret);
@@ -408,22 +423,22 @@ impl UdpServer {
                     .server_random
                     .ok_or(anyhow!("server random is none."))?;
 
-                if self.use_extended_master_secret {
-                    // TODO
-                    // - concatenate handshake messages
-                    // - generate extended master secret
+                let master_secret = if self.use_extended_master_secret {
+                    let handshake_messages = self.handshake_messages.concat();
+                    let handshake_hash = Sha256::digest(handshake_messages);
+                    generate_extended_master_secret(pre_master_secret, handshake_hash)
                 } else {
-                    let master_secret =
-                        generate_master_secret(pre_master_secret, &client_random, &server_random);
-                    let encryption_keys =
-                        generate_encryption_keys(&master_secret, &client_random, &server_random);
-                    let gcm = Gcm::new(
-                        &encryption_keys.server_write_key,
-                        &encryption_keys.server_write_iv,
-                        &encryption_keys.client_write_key,
-                        &encryption_keys.client_write_iv,
-                    );
-                }
+                    generate_master_secret(pre_master_secret, &client_random, &server_random)
+                };
+
+                let encryption_keys =
+                    generate_encryption_keys(&master_secret, &client_random, &server_random);
+                let gcm = Gcm::new(
+                    &encryption_keys.server_write_key,
+                    &encryption_keys.server_write_iv,
+                    &encryption_keys.client_write_key,
+                    &encryption_keys.client_write_iv,
+                );
             }
             HandshakeType::CertificateVerify => {
                 let message = CertificateVerify::decode(reader)?;
