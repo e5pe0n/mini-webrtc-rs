@@ -5,7 +5,7 @@ use crate::dtls::buffer::{BufReader, BufWriter};
 
 #[derive(TryFromPrimitive)]
 #[try_from(type = "u8")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HandshakeType {
     HelloRequest = 0,
     ClientHello = 1,

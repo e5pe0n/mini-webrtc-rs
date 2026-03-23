@@ -5,6 +5,7 @@ use crate::dtls::common::{
 };
 use crate::dtls::crypto::{
     Gcm, generate_encryption_keys, generate_extended_master_secret, generate_master_secret,
+    generate_verify_data,
 };
 use crate::dtls::extensions::Extension;
 use crate::dtls::extensions::use_srtp::SrtpProtectionProfile;
@@ -33,6 +34,7 @@ use p256::ecdsa::signature::hazmat::PrehashVerifier;
 use p256::ecdsa::{Signature, VerifyingKey};
 use rcgen::{CertifiedKey, KeyPair};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
@@ -48,12 +50,14 @@ pub struct UdpServer {
     sequence_number: u64,
     epoch: u16,
     cookie: Option<Cookie>,
-    handshake_messages: Vec<Vec<u8>>,
+    received_handshake_messages: HashMap<HandshakeType, Vec<u8>>,
+    sent_handshake_messages: HashMap<HandshakeType, Vec<u8>>,
     cipher_suite_id: Option<CipherSuiteId>,
     curve: Option<ECCurve>,
     srtp_protection_profile: Option<SrtpProtectionProfile>,
     use_extended_master_secret: bool,
     ephemeral_secret: Option<EphemeralSecret>,
+    master_secret: Option<Vec<u8>>,
     client_random: Option<Random>,
     server_random: Option<Random>,
     client_certificate: Option<Vec<u8>>,
@@ -78,7 +82,8 @@ impl UdpServer {
             sequence_number: 0,
             epoch: 0,
             cookie: None,
-            handshake_messages: vec![],
+            received_handshake_messages: HashMap::new(),
+            sent_handshake_messages: HashMap::new(),
             cipher_suite_id: None,
             curve: None,
             srtp_protection_profile: None,
@@ -249,7 +254,7 @@ impl UdpServer {
         self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
 
         // only handshake message part; exclude record header
-        self.handshake_messages.push(handshake_message);
+        self.received_handshake_messages.push(handshake_message);
         Ok(())
     }
 
@@ -262,7 +267,7 @@ impl UdpServer {
         let handshake_header = HandshakeHeader::decode(reader)?;
 
         // only handshake message part; exclude record header
-        self.handshake_messages
+        self.received_handshake_messages
             .push(reader.buf[reader.pos..].to_vec());
 
         match handshake_header.handshake_type {
@@ -421,15 +426,20 @@ impl UdpServer {
                     .ok_or(anyhow!("server random is none."))?;
 
                 let master_secret = if self.use_extended_master_secret {
-                    let handshake_messages = self.handshake_messages.concat();
+                    let handshake_messages = self.concat_handshake_messages(false, false)?;
                     let handshake_hash = Sha256::digest(handshake_messages);
                     generate_extended_master_secret(pre_master_secret, handshake_hash)
                 } else {
                     generate_master_secret(pre_master_secret, &client_random, &server_random)
                 };
 
-                let encryption_keys =
-                    generate_encryption_keys(&master_secret, &client_random, &server_random);
+                self.master_secret = Some(master_secret);
+
+                let encryption_keys = generate_encryption_keys(
+                    &self.master_secret.unwrap(),
+                    &client_random,
+                    &server_random,
+                );
                 let gcm = Gcm::new(
                     &encryption_keys.server_write_key,
                     &encryption_keys.server_write_iv,
@@ -450,8 +460,8 @@ impl UdpServer {
                     );
                     // set dtls state to FAILED
                 }
-                let handshake_messages = self.handshake_messages.concat();
-                let handshake_hash = Sha256::digest(handshake_messages);
+                let handshake_messages = self.concat_handshake_messages(false, false)?;
+                let handshake_messages_hash = Sha256::digest(handshake_messages);
                 let client_certificate = self
                     .client_certificate
                     .clone()
@@ -459,10 +469,22 @@ impl UdpServer {
                 let (_, x509) = x509_parser::parse_x509_certificate(&client_certificate)?;
                 let verifying_key = VerifyingKey::from_sec1_bytes(x509.public_key().raw)?;
                 let signature = Signature::from_der(&message.signature)?;
-                verifying_key.verify_prehash(&handshake_hash, &signature)?;
+                verifying_key.verify_prehash(&handshake_messages_hash, &signature)?;
             }
             HandshakeType::Finished => {
-                // TODO
+                let handshake_messages = self.concat_handshake_messages(true, true)?;
+                let handshake_messages_hash = Sha256::digest(handshake_messages);
+                let verify_data =
+                    generate_verify_data(&self.master_secret.unwrap(), &handshake_messages_hash);
+
+                self.handshake_flight = HandshakeFlight::Flight6;
+
+                {
+                    // TODO: ChangeCipherSuite
+                }
+                {
+                    // TODO: Finished response
+                }
                 // TODO: set CONNECTED to dtls state
             }
             _ => warn!(
@@ -472,5 +494,59 @@ impl UdpServer {
         }
 
         Ok(())
+    }
+
+    fn concat_handshake_messages(
+        &self,
+        include_received_certificate_verify: bool,
+        include_received_finished: bool,
+    ) -> Result<Vec<u8>> {
+        Ok(vec![
+            self.received_handshake_messages
+                .get(&HandshakeType::ClientHello)
+                .ok_or(anyhow!("client hello not found."))?
+                .clone(),
+            self.sent_handshake_messages
+                .get(&HandshakeType::ServerHello)
+                .ok_or(anyhow!("server hello not found."))?
+                .clone(),
+            self.sent_handshake_messages
+                .get(&HandshakeType::Certificate)
+                .ok_or(anyhow!("server certificate not found."))?
+                .clone(),
+            self.sent_handshake_messages
+                .get(&HandshakeType::ServerKeyExchange)
+                .ok_or(anyhow!("server key exchange not found."))?
+                .clone(),
+            self.sent_handshake_messages
+                .get(&HandshakeType::CertificateRequest)
+                .ok_or(anyhow!("certificate request not found."))?
+                .clone(),
+            self.sent_handshake_messages
+                .get(&HandshakeType::ServerHelloDone)
+                .ok_or(anyhow!("server hello done not found."))?
+                .clone(),
+            self.received_handshake_messages
+                .get(&HandshakeType::Certificate)
+                .ok_or(anyhow!("client certificate not found."))?
+                .clone(),
+            if include_received_certificate_verify {
+                self.received_handshake_messages
+                    .get(&HandshakeType::CertificateVerify)
+                    .ok_or(anyhow!("certificate verify not found."))?
+                    .clone()
+            } else {
+                vec![]
+            },
+            if include_received_finished {
+                self.received_handshake_messages
+                    .get(&HandshakeType::Finished)
+                    .ok_or(anyhow!("finished not found."))?
+                    .clone()
+            } else {
+                vec![]
+            },
+        ]
+        .concat())
     }
 }
