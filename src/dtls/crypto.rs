@@ -66,7 +66,7 @@ pub fn generate_master_secret(
     prf_p_hash(pre_master_secret.as_bytes(), &seed, 48)
 }
 
-pub struct EncryptionKes {
+pub struct EncryptionKeys {
     pub client_write_key: Vec<u8>,
     pub server_write_key: Vec<u8>,
     pub client_write_iv: Vec<u8>,
@@ -80,7 +80,7 @@ pub fn generate_encryption_keys(
     master_secret: &[u8],
     client_random: &Random,
     server_random: &Random,
-) -> EncryptionKes {
+) -> EncryptionKeys {
     let mut seed = PRF_KEY_EXPANSION_LABEL.as_bytes().to_vec();
     seed.extend_from_slice(&server_random.to_bytes());
     seed.extend_from_slice(&client_random.to_bytes());
@@ -90,7 +90,7 @@ pub fn generate_encryption_keys(
 
     let key_material = prf_p_hash(master_secret, &seed, 2 * prf_key_len + 2 * prf_iv_len);
 
-    EncryptionKes {
+    EncryptionKeys {
         client_write_key: key_material[..prf_key_len].to_vec(),
         server_write_key: key_material[prf_key_len..prf_key_len * 2].to_vec(),
         client_write_iv: key_material[prf_key_len * 2..prf_key_len * 3].to_vec(),
