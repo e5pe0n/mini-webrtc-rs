@@ -63,6 +63,7 @@ pub struct UdpServer {
     client_random: Option<Random>,
     server_random: Option<Random>,
     client_certificate: Option<Vec<u8>>,
+    gcm: Option<Gcm>,
 }
 
 impl UdpServer {
@@ -95,6 +96,7 @@ impl UdpServer {
             client_random: None,
             server_random: None,
             client_certificate: None,
+            gcm: None,
         })
     }
 
@@ -262,6 +264,11 @@ impl UdpServer {
         let mut writer = BufWriter::new();
         record_header.encode(&mut writer);
         writer.write_bytes(&encoded_message);
+        let encoded_record = writer.buf();
+
+        if let Some(gcm) = self.gcm {
+            gcm
+        }
 
         self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
 
@@ -461,6 +468,7 @@ impl UdpServer {
                     &encryption_keys.client_write_key,
                     &encryption_keys.client_write_iv,
                 );
+                self.gcm = Some(gcm);
             }
             HandshakeType::CertificateVerify => {
                 let message = CertificateVerify::decode(reader)?;

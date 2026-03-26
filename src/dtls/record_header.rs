@@ -19,8 +19,8 @@ const DTLS_VERSION_1_2: u16 = 0xfefd;
 
 #[derive(Debug)]
 pub struct DtlsVersion {
-    major: u8,
-    minor: u8,
+    pub major: u8,
+    pub minor: u8,
 }
 
 impl TryFrom<u16> for DtlsVersion {

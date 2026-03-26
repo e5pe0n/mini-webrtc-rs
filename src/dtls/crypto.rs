@@ -1,12 +1,14 @@
-use aes_gcm::{Aes128Gcm, Key, KeyInit};
+use aes_gcm::{AeadInPlace, Aes128Gcm, Key, KeyInit};
+use anyhow::{Result, anyhow};
 use hmac::{
     Hmac, Mac,
     digest::{consts::U32, generic_array::GenericArray},
 };
+use rand::RngCore;
 use sha2::Sha256;
 use x25519_dalek::SharedSecret;
 
-use crate::dtls::handshake::random::Random;
+use crate::dtls::{handshake::random::Random, record_header::RecordHeader};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -99,6 +101,8 @@ pub fn generate_encryption_keys(
     }
 }
 
+const GCM_NONCE_LENGTH: usize = 12;
+
 pub struct Gcm {
     local_gcm: Aes128Gcm,
     remote_gcm: Aes128Gcm,
@@ -119,6 +123,46 @@ impl Gcm {
             local_write_iv: local_write_iv.to_vec(),
             remote_write_iv: remote_write_iv.to_vec(),
         }
+    }
+
+    pub fn encrypt(&self, record_header: RecordHeader, payload: Vec<u8>) -> Result<Vec<u8>> {
+        // https://datatracker.ietf.org/doc/html/rfc5288#section-3
+        let implicit_nonce = self.local_write_iv[..4].to_vec();
+        let explicit_nonce = {
+            let mut explicit_nonce = vec![0u8; GCM_NONCE_LENGTH - implicit_nonce.len()];
+            let mut rng = rand::rng();
+            rng.fill_bytes(&mut explicit_nonce);
+            explicit_nonce
+        };
+        let nonce = vec![implicit_nonce, explicit_nonce.clone()].concat();
+
+        let additional_data = {
+            // https://datatracker.ietf.org/doc/html/rfc5246#section-6.2.3.3
+            let mut additional_data = vec![0u8; 13];
+
+            additional_data[..8].copy_from_slice(&record_header.sequence_number.to_be_bytes()); // 48bit
+            additional_data[..2].copy_from_slice(&record_header.epoch.to_be_bytes());
+
+            additional_data[8] = record_header.content_type as u8;
+            additional_data[9] = record_header.version.major as u8;
+            additional_data[10] = record_header.version.minor as u8;
+            additional_data[11..].copy_from_slice(&(record_header.length).to_be_bytes());
+
+            additional_data
+        };
+
+        let mut encrypted_payload = payload;
+        self.local_gcm
+            .encrypt_in_place(
+                GenericArray::from_slice(&nonce),
+                &additional_data,
+                &mut encrypted_payload,
+            )
+            .map_err(|err| anyhow!("failed to encrypt payload: {err:?}"))?;
+        // https://datatracker.ietf.org/doc/html/rfc5246#section-6.2.3.3
+        let encrypted_record = vec![explicit_nonce, encrypted_payload].concat();
+
+        Ok(encrypted_record)
     }
 }
 
