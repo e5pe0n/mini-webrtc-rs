@@ -90,6 +90,7 @@ impl UdpServer {
             srtp_protection_profile: None,
             use_extended_master_secret: false,
             ephemeral_secret: None,
+            master_secret: None,
             client_random: None,
             server_random: None,
             client_certificate: None,
@@ -217,7 +218,7 @@ impl UdpServer {
     }
 
     async fn send_message(&mut self, message: DtlsMessage, peer_addr: SocketAddr) -> Result<()> {
-        let encoded_message = match message {
+        let encoded_message = match &message {
             DtlsMessage::Handshake(message) => {
                 let mut payload_writer = BufWriter::new();
                 message.encode(&mut payload_writer);
@@ -237,7 +238,8 @@ impl UdpServer {
                 let encoded_message = handshake_writer.buf();
 
                 // only handshake message part; exclude record header
-                self.received_handshake_messages.push(encoded_message);
+                self.received_handshake_messages
+                    .insert(message.get_handshake_type(), encoded_message.clone());
                 encoded_message
             }
             DtlsMessage::ChangeCipherSpec(message) => {
@@ -275,8 +277,10 @@ impl UdpServer {
         let handshake_header = HandshakeHeader::decode(reader)?;
 
         // only handshake message part; exclude record header
-        self.received_handshake_messages
-            .push(reader.buf[reader.pos..].to_vec());
+        self.received_handshake_messages.insert(
+            handshake_header.handshake_type,
+            reader.buf[reader.pos..].to_vec(),
+        );
 
         match handshake_header.handshake_type {
             HandshakeType::ClientHello => {
@@ -446,7 +450,7 @@ impl UdpServer {
                 self.master_secret = Some(master_secret);
 
                 let encryption_keys = generate_encryption_keys(
-                    &self.master_secret.unwrap(),
+                    &self.master_secret.clone().unwrap(),
                     &client_random,
                     &server_random,
                 );
@@ -484,8 +488,10 @@ impl UdpServer {
             HandshakeType::Finished => {
                 let handshake_messages = self.concat_handshake_messages(true, true)?;
                 let handshake_messages_hash = Sha256::digest(handshake_messages);
-                let verify_data =
-                    generate_verify_data(&self.master_secret.unwrap(), &handshake_messages_hash);
+                let verify_data = generate_verify_data(
+                    &self.master_secret.clone().unwrap(),
+                    &handshake_messages_hash,
+                );
 
                 self.handshake_flight = HandshakeFlight::Flight6;
 
