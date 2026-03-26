@@ -17,6 +17,7 @@ use crate::dtls::handshake::certificate_verify::CertificateVerify;
 use crate::dtls::handshake::client_hello::ClientHello;
 use crate::dtls::handshake::client_key_exchange::ClientKeyExchange;
 use crate::dtls::handshake::context::HandshakeFlight;
+use crate::dtls::handshake::finished::Finished;
 use crate::dtls::handshake::header::{HandshakeHeader, HandshakeType};
 use crate::dtls::handshake::hello_verify_request::HelloVerifyRequest;
 use crate::dtls::handshake::random::Random;
@@ -502,7 +503,10 @@ impl UdpServer {
                         .await?;
                 }
                 {
-                    // TODO: Finished response
+                    // Finished response
+                    let message = Finished { verify_data };
+                    self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
+                        .await?;
                 }
                 // TODO: set CONNECTED to dtls state
             }
