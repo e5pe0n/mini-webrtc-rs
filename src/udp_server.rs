@@ -1,4 +1,5 @@
 use crate::dtls::buffer::{BufReader, BufWriter};
+use crate::dtls::change_cipher_sec::ChangeCipherSpec;
 use crate::dtls::cipher_suite::CipherSuiteId;
 use crate::dtls::common::{
     Cookie, ECCurve, Fingerprint, HashAlgorithm, SignatureAlgorithm, generate_curve_key_pair,
@@ -22,8 +23,8 @@ use crate::dtls::handshake::random::Random;
 use crate::dtls::handshake::server_hello::ServerHello;
 use crate::dtls::handshake::server_hello_done::ServerHelloDone;
 use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
-use crate::dtls::is_dtls_packet;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
+use crate::dtls::{DtlsMessage, is_dtls_packet};
 use crate::ice::IceAgent;
 use crate::stun::{
     Attribute, AttributeType, HEADER_BYTES, MAGIC_COOKIE, StunMessage, StunMessageBuilder,
@@ -215,46 +216,53 @@ impl UdpServer {
         Ok(())
     }
 
-    async fn send_handshake_message(
-        &mut self,
-        handshake_message: impl HandshakeMessage,
-        peer_addr: SocketAddr,
-    ) -> Result<()> {
-        let mut payload_writer = BufWriter::new();
-        handshake_message.encode(&mut payload_writer);
-        let payload = payload_writer.buf();
+    async fn send_message(&mut self, message: DtlsMessage, peer_addr: SocketAddr) -> Result<()> {
+        let encoded_message = match message {
+            DtlsMessage::Handshake(message) => {
+                let mut payload_writer = BufWriter::new();
+                message.encode(&mut payload_writer);
+                let payload = payload_writer.buf();
 
-        // Create Handshake Header
-        let mut handshake_writer = BufWriter::new();
-        let handshake_header = HandshakeHeader::new(
-            handshake_message.get_handshake_type(),
-            payload.len() as u32,
-            self.message_seq,
-            0,
-            payload.len() as u32,
-        );
-        self.message_seq += 1;
-        handshake_header.encode(&mut handshake_writer);
-        handshake_writer.write_bytes(&payload);
-        let handshake_message = handshake_writer.buf();
+                // Create Handshake Header
+                let mut handshake_writer = BufWriter::new();
+                let handshake_header = HandshakeHeader::new(
+                    message.get_handshake_type(),
+                    payload.len() as u32,
+                    self.message_seq,
+                    0,
+                    payload.len() as u32,
+                );
+                handshake_header.encode(&mut handshake_writer);
+                handshake_writer.write_bytes(&payload);
+                let encoded_message = handshake_writer.buf();
+
+                // only handshake message part; exclude record header
+                self.received_handshake_messages.push(encoded_message);
+                encoded_message
+            }
+            DtlsMessage::ChangeCipherSpec(message) => {
+                let mut writer = BufWriter::new();
+                message.encode(&mut writer);
+                writer.buf()
+            }
+        };
 
         // Create Record Header
         let record_header = RecordHeader::new(
-            ContentType::Handshake,
+            message.get_content_type(),
             DtlsVersion::new(1, 2),
             0,
             self.sequence_number,
-            handshake_message.len() as u16,
+            encoded_message.len() as u16,
         );
 
         let mut writer = BufWriter::new();
         record_header.encode(&mut writer);
-        writer.write_bytes(&handshake_message);
+        writer.write_bytes(&encoded_message);
 
         self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
 
-        // only handshake message part; exclude record header
-        self.received_handshake_messages.push(handshake_message);
+        self.message_seq += 1;
         Ok(())
     }
 
@@ -280,10 +288,10 @@ impl UdpServer {
                         // TODO: set CONNECTING to dtls state
 
                         // TODO: negotiate dtls version
-                        let hello_verify_request = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
-                        let cookie = hello_verify_request.cookie.clone();
+                        let message = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
+                        let cookie = message.cookie.clone();
 
-                        self.send_handshake_message(hello_verify_request, peer_addr)
+                        self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                             .await?;
 
                         self.handshake_flight = HandshakeFlight::Flight2;
@@ -345,39 +353,41 @@ impl UdpServer {
                         {
                             // ServerHello
                             // TODO: negotiate dtls version
-                            let server_hello =
+                            let message =
                                 ServerHello::new(DtlsVersion::new(1, 2), server_random.clone());
-                            self.send_handshake_message(server_hello, peer_addr).await?;
+                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
+                                .await?;
                         }
                         {
                             // Server Certificate
-                            let certificate =
+                            let message =
                                 Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
-                            self.send_handshake_message(certificate, peer_addr).await?;
+                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
+                                .await?;
                         }
                         let ephemeral_secret = {
                             // ServerKeyExchange
                             let curve_key_pair = generate_curve_key_pair();
-                            let server_key_exchange = ServerKeyExchange::new(
+                            let message = ServerKeyExchange::new(
                                 curve_key_pair.public_key,
                                 &self.certified_key,
                                 &client_random,
                                 &server_random,
                             );
-                            self.send_handshake_message(server_key_exchange, peer_addr)
+                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                                 .await?;
                             curve_key_pair.secret
                         };
                         {
                             // Certificate Request
-                            let certificate_request = CertificateRequest::new();
-                            self.send_handshake_message(certificate_request, peer_addr)
+                            let message = CertificateRequest::new();
+                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                                 .await?;
                         }
                         {
                             // ServerHelloDone
-                            let server_hello_done = ServerHelloDone::new();
-                            self.send_handshake_message(server_hello_done, peer_addr)
+                            let message = ServerHelloDone::new();
+                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                                 .await?;
                         }
 
@@ -480,7 +490,10 @@ impl UdpServer {
                 self.handshake_flight = HandshakeFlight::Flight6;
 
                 {
-                    // TODO: ChangeCipherSuite
+                    // ChangeCipherSuite
+                    let message = ChangeCipherSpec {};
+                    self.send_message(DtlsMessage::ChangeCipherSpec(message), peer_addr)
+                        .await?;
                 }
                 {
                     // TODO: Finished response
