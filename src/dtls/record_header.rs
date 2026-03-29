@@ -17,7 +17,7 @@ pub enum ContentType {
 const DTLS_VERSION_1_0: u16 = 0xfeff;
 const DTLS_VERSION_1_2: u16 = 0xfefd;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DtlsVersion {
     pub major: u8,
     pub minor: u8,
@@ -46,6 +46,7 @@ impl DtlsVersion {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct RecordHeader {
     pub content_type: ContentType,
     pub version: DtlsVersion,

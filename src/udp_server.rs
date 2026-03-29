@@ -253,7 +253,7 @@ impl UdpServer {
         };
 
         // Create Record Header
-        let record_header = RecordHeader::new(
+        let mut record_header = RecordHeader::new(
             message.get_content_type(),
             DtlsVersion::new(1, 2),
             0,
@@ -261,14 +261,19 @@ impl UdpServer {
             encoded_message.len() as u16,
         );
 
+        let encoded_message = if self.epoch > 0
+            && let Some(gcm) = &self.gcm
+        {
+            let encrypted_message = gcm.encrypt(record_header.clone(), encoded_message)?;
+            record_header.length = encrypted_message.len() as u16;
+            encrypted_message
+        } else {
+            encoded_message
+        };
+
         let mut writer = BufWriter::new();
         record_header.encode(&mut writer);
         writer.write_bytes(&encoded_message);
-        let encoded_record = writer.buf();
-
-        if let Some(gcm) = self.gcm {
-            gcm
-        }
 
         self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
 
