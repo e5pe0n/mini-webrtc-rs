@@ -3,6 +3,7 @@ mod error;
 mod ice;
 mod sdp;
 mod signaling_server;
+mod srtp;
 mod stun;
 mod udp_server;
 
