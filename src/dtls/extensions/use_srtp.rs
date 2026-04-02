@@ -1,7 +1,7 @@
 use anyhow::Result;
 use mini_webrtc_derive::FromPrimitive;
 
-use crate::dtls::buffer::BufReader;
+use crate::{dtls::buffer::BufReader, srtp::protection_profile::SrtpProtectionProfile};
 
 // https://datatracker.ietf.org/doc/html/rfc5764
 #[derive(Debug)]
@@ -27,12 +27,4 @@ impl UseSrtp {
             srtp_mki: mki.to_vec(),
         })
     }
-}
-
-// https://www.iana.org/assignments/srtp-protection/srtp-protection.xhtml
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
-#[from(type = "u16", default = "Unsupported")]
-pub enum SrtpProtectionProfile {
-    SrtpAeadAes128Gcm = 0x0007,
-    Unsupported = 0x0000,
 }
