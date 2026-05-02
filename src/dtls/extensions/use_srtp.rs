@@ -1,5 +1,4 @@
 use anyhow::Result;
-use mini_webrtc_derive::FromPrimitive;
 
 use crate::{dtls::buffer::BufReader, srtp::protection_profile::SrtpProtectionProfile};
 

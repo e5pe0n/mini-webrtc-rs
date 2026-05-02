@@ -1,5 +1,5 @@
 // https://www.iana.org/assignments/srtp-protection/srtp-protection.xhtml
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SrtpProtectionProfile {
     SrtpAeadAes128Gcm(ProtectionProfile),
     Unsupported,
@@ -19,7 +19,7 @@ impl From<u16> for SrtpProtectionProfile {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ProtectionProfile {
     pub value: u16,
     pub key_length: usize,

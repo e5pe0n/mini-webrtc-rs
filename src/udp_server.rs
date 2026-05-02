@@ -9,7 +9,6 @@ use crate::dtls::crypto::{
     generate_verify_data,
 };
 use crate::dtls::extensions::Extension;
-use crate::dtls::extensions::use_srtp::SrtpProtectionProfile;
 use crate::dtls::handshake::HandshakeMessage;
 use crate::dtls::handshake::certificate::Certificate;
 use crate::dtls::handshake::certificate_request::CertificateRequest;
@@ -27,6 +26,7 @@ use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
 use crate::dtls::{DtlsMessage, is_dtls_packet};
 use crate::ice::IceAgent;
+use crate::srtp::protection_profile::SrtpProtectionProfile;
 use crate::stun::{
     Attribute, AttributeType, HEADER_BYTES, MAGIC_COOKIE, StunMessage, StunMessageBuilder,
     StunMessageClass, StunMessageMethod, StunMessageType,
@@ -141,9 +141,15 @@ impl UdpServer {
 
         match record_header.content_type {
             ContentType::ChangeCipherSpec => {
-                debug!("Received ChangeCipherSpec from {}", peer_addr)
+                // TODO: handle ChangeCipherSpec
+                debug!("Received ChangeCipherSpec from {}", peer_addr);
+                Ok(())
             }
-            ContentType::Alert => debug!("Received Alert from {}", peer_addr),
+            ContentType::Alert => {
+                // TODO: handle Alert
+                debug!("Received Alert from {}", peer_addr);
+                Ok(())
+            }
             ContentType::Handshake => {
                 debug!("Received Handshake from {}", peer_addr);
                 return self
@@ -151,7 +157,9 @@ impl UdpServer {
                     .await;
             }
             ContentType::ApplicationData => {
-                debug!("Received ApplicationData from {}", peer_addr)
+                // TODO: handle ApplicationData
+                debug!("Received ApplicationData from {}", peer_addr);
+                Ok(())
             }
         }
     }
@@ -346,8 +354,9 @@ impl UdpServer {
                                     let profile = value
                                         .srtp_protection_profiles
                                         .iter()
-                                        .find(|profile| {
-                                            **profile == SrtpProtectionProfile::SrtpAeadAes128Gcm
+                                        .find(|profile| match **profile {
+                                            SrtpProtectionProfile::SrtpAeadAes128Gcm(_) => true,
+                                            _ => false,
                                         })
                                         .ok_or(anyhow!(
                                             "SrtpProtectionProfile::SrtpAeadAes128Gcm not found."
