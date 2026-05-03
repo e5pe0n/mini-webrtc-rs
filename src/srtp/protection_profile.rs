@@ -26,3 +26,10 @@ pub struct ProtectionProfile {
     pub salt_length: usize,
     pub aead_auth_tag_length: usize,
 }
+
+pub struct SrtpEncryptionKeys {
+    pub server_master_key: Vec<u8>,
+    pub server_master_salt: Vec<u8>,
+    pub client_master_key: Vec<u8>,
+    pub client_master_salt: Vec<u8>,
+}

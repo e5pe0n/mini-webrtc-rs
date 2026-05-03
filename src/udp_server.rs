@@ -24,9 +24,10 @@ use crate::dtls::handshake::server_hello::ServerHello;
 use crate::dtls::handshake::server_hello_done::ServerHelloDone;
 use crate::dtls::handshake::server_key_exchange::ServerKeyExchange;
 use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
-use crate::dtls::{DtlsMessage, is_dtls_packet};
+use crate::dtls::{DtlsMessage, DtlsState, is_dtls_packet};
 use crate::ice::IceAgent;
-use crate::srtp::protection_profile::SrtpProtectionProfile;
+use crate::srtp::crypto::{SrtpGcm, generate_keying_material};
+use crate::srtp::protection_profile::{SrtpEncryptionKeys, SrtpProtectionProfile};
 use crate::stun::{
     Attribute, AttributeType, HEADER_BYTES, MAGIC_COOKIE, StunMessage, StunMessageBuilder,
     StunMessageClass, StunMessageMethod, StunMessageType,
@@ -64,6 +65,8 @@ pub struct UdpServer {
     server_random: Option<Random>,
     client_certificate: Option<Vec<u8>>,
     gcm: Option<Gcm>,
+    dtls_state: DtlsState,
+    srtp_gcm: Option<SrtpGcm>,
 }
 
 impl UdpServer {
@@ -97,6 +100,8 @@ impl UdpServer {
             server_random: None,
             client_certificate: None,
             gcm: None,
+            dtls_state: DtlsState::New,
+            srtp_gcm: None,
         })
     }
 
@@ -152,9 +157,54 @@ impl UdpServer {
             }
             ContentType::Handshake => {
                 debug!("Received Handshake from {}", peer_addr);
-                return self
-                    .handle_handshake(&mut reader, record_header, peer_addr)
-                    .await;
+                self.handle_handshake(&mut reader, record_header, peer_addr)
+                    .await?;
+                match self.dtls_state {
+                    DtlsState::Connected => {
+                        // export key material
+                        let profile = match *&self
+                            .srtp_protection_profile
+                            .ok_or(anyhow!("srtp protection profile is none."))?
+                        {
+                            SrtpProtectionProfile::SrtpAeadAes128Gcm(profile) => Ok(profile),
+                            _ => Err(anyhow!("unsupported srtp protection profile.")),
+                        }?;
+                        let keying_material = generate_keying_material(
+                            &self
+                                .master_secret
+                                .clone()
+                                .ok_or(anyhow!("master secret is none."))?,
+                            &self
+                                .client_random
+                                .ok_or(anyhow!("client random is none."))?
+                                .to_bytes(),
+                            &self
+                                .server_random
+                                .ok_or(anyhow!("server random is none."))?
+                                .to_bytes(),
+                            profile.key_length * 2 + profile.salt_length * 2,
+                        );
+                        // init srtp cipher suite
+                        let encryption_keys = SrtpEncryptionKeys {
+                            client_master_key: keying_material[..profile.key_length].to_vec(),
+                            client_master_salt: keying_material
+                                [profile.key_length..profile.key_length * 2]
+                                .to_vec(),
+                            server_master_key: keying_material[profile.key_length * 2..].to_vec(),
+                            server_master_salt: keying_material
+                                [profile.key_length * 2 + profile.salt_length..]
+                                .to_vec(),
+                        };
+                        // use client key and salt to decrypt data from client
+                        let srtp_gcm = SrtpGcm::new(
+                            &encryption_keys.client_master_key,
+                            &encryption_keys.client_master_salt,
+                        );
+                        self.srtp_gcm = Some(srtp_gcm);
+                    }
+                    _ => {}
+                }
+                Ok(())
             }
             ContentType::ApplicationData => {
                 // TODO: handle ApplicationData

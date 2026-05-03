@@ -2,6 +2,8 @@ use aes::Aes128;
 use aes::cipher::{BlockEncrypt, generic_array::GenericArray};
 use aes_gcm::{Aes128Gcm, Key, KeyInit};
 
+use crate::dtls::crypto::prf_p_hash;
+
 pub struct SrtpGcm {
     srtp_gcm: Aes128Gcm,
     srtcp_gcm: Aes128Gcm,
@@ -79,4 +81,23 @@ fn aes_cm_key_derivation(
         block.encrypt_block(ki);
     }
     key
+}
+
+const PRF_DTLS_SRTP_EXPORTER_LABEL: &str = "EXTRACTOR-dtls_srtp";
+
+// https://datatracker.ietf.org/doc/html/rfc5764#section-4.2
+// https://datatracker.ietf.org/doc/html/rfc5705
+pub fn generate_keying_material(
+    master_secret: &[u8],
+    client_random: &[u8],
+    server_random: &[u8],
+    requested_bytes: usize,
+) -> Vec<u8> {
+    let seed = vec![
+        PRF_DTLS_SRTP_EXPORTER_LABEL.as_bytes().to_vec(),
+        client_random.to_vec(),
+        server_random.to_vec(),
+    ]
+    .concat();
+    prf_p_hash(master_secret, &seed, requested_bytes)
 }

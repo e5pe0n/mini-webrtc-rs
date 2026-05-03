@@ -29,3 +29,12 @@ impl DtlsMessage {
         }
     }
 }
+
+// https://developer.mozilla.org/en-US/docs/Web/API/RTCDtlsTransport/state
+pub enum DtlsState {
+    New,
+    Connecting,
+    Connected,
+    Closed,
+    Failed,
+}

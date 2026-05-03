@@ -24,7 +24,7 @@ pub fn hmac_sha(key: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 // prf (pseudorandom function)
-fn prf_p_hash(secret: &[u8], seed: &[u8], requested_bytes: usize) -> Vec<u8> {
+pub fn prf_p_hash(secret: &[u8], seed: &[u8], requested_bytes: usize) -> Vec<u8> {
     let mut last_round = seed.to_vec();
     let mut out: Vec<u8> = vec![];
 
