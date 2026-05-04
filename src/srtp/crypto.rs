@@ -1,8 +1,13 @@
 use aes::Aes128;
 use aes::cipher::{BlockEncrypt, generic_array::GenericArray};
-use aes_gcm::{Aes128Gcm, Key, KeyInit};
+use aes_gcm::aead::{Aead, Payload};
+use aes_gcm::{Aes128Gcm, Key, KeyInit, Nonce};
+use anyhow::{Result, anyhow};
 
+use crate::dtls::buffer::BufWriter;
 use crate::dtls::crypto::prf_p_hash;
+use crate::srtp::header::RtpHeader;
+use crate::srtp::packet::RtpPacket;
 
 pub struct SrtpGcm {
     srtp_gcm: Aes128Gcm,
@@ -34,6 +39,44 @@ impl SrtpGcm {
             srtp_salt,
             srtcp_salt,
         }
+    }
+
+    // https://datatracker.ietf.org/doc/html/rfc7714#section-8.1
+    fn iv(&self, header: &RtpHeader, roc: u32) -> Vec<u8> {
+        let mut writer = BufWriter::new();
+        writer.write_u16(0);
+        writer.write_u32(header.ssrc);
+        writer.write_u32(roc);
+        writer.write_u16(header.sequence_number);
+
+        let mut iv = writer.buf();
+
+        for (i, v) in iv.iter_mut().enumerate() {
+            *v ^= self.srtp_salt[i];
+        }
+
+        iv
+    }
+
+    pub fn decrypt(&self, packet: RtpPacket, roc: u32) -> Result<RtpPacket> {
+        // https://datatracker.ietf.org/doc/html/rfc3711#section-4.1.1
+        let nonce = self.iv(&packet.header, roc);
+        let decrypted_msg = self
+            .srtp_gcm
+            .decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &packet.raw[packet.header_size..],
+                    aad: &packet.raw[..packet.header_size],
+                },
+            )
+            .map_err(|err| anyhow!("failed to decrypt srtp; {err}"))?;
+        Ok(RtpPacket {
+            header: packet.header,
+            header_size: packet.header_size,
+            payload: decrypted_msg,
+            raw: packet.raw,
+        })
     }
 }
 

@@ -1,3 +1,5 @@
+use crate::srtp::packet::SrtpPacketIndex;
+
 pub mod crypto;
 pub mod header;
 pub mod packet;
@@ -20,4 +22,10 @@ pub mod protection_profile;
 pub fn is_rtp_packet(data: &[u8]) -> bool {
     let payload_type = data[1] & 0b01111111;
     payload_type <= 35 || (payload_type >= 96 && payload_type <= 127)
+}
+
+pub struct SrtpSsrcState {
+    pub ssrc: u32,
+    pub index: SrtpPacketIndex,
+    pub rollover_has_processed: bool,
 }

@@ -17,7 +17,7 @@ use mini_webrtc_derive::FromPrimitive;
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 // https://datatracker.ietf.org/doc/html/rfc3550#section-5.1
-pub struct Header {
+pub struct RtpHeader {
     pub version: u8,
     pub padding: bool,
     pub extension: bool,
@@ -30,7 +30,7 @@ pub struct Header {
     pub raw: Vec<u8>,
 }
 
-impl Header {
+impl RtpHeader {
     pub fn decode(reader: &mut BufReader) -> Result<Self> {
         let pos = reader.pos;
         let first_byte = reader.read_u8()?;
@@ -59,7 +59,7 @@ impl Header {
 }
 
 // https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-1
-#[derive(FromPrimitive)]
+#[derive(FromPrimitive, Debug)]
 #[from(type = "u8", default = "Unsupported")]
 pub enum PayloadType {
     // https://datatracker.ietf.org/doc/html/rfc7741

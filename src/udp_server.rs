@@ -27,7 +27,10 @@ use crate::dtls::record_header::{ContentType, DtlsVersion, RecordHeader};
 use crate::dtls::{DtlsMessage, DtlsState, is_dtls_packet};
 use crate::ice::IceAgent;
 use crate::srtp::crypto::{SrtpGcm, generate_keying_material};
+use crate::srtp::header::PayloadType;
+use crate::srtp::packet::{RtpPacket, SrtpPacketIndex};
 use crate::srtp::protection_profile::{SrtpEncryptionKeys, SrtpProtectionProfile};
+use crate::srtp::{SrtpSsrcState, is_rtp_packet};
 use crate::stun::{
     Attribute, AttributeType, HEADER_BYTES, MAGIC_COOKIE, StunMessage, StunMessageBuilder,
     StunMessageClass, StunMessageMethod, StunMessageType,
@@ -67,6 +70,7 @@ pub struct UdpServer {
     gcm: Option<Gcm>,
     dtls_state: DtlsState,
     srtp_gcm: Option<SrtpGcm>,
+    srtp_ssrc_states: HashMap<u32, SrtpSsrcState>,
 }
 
 impl UdpServer {
@@ -102,6 +106,7 @@ impl UdpServer {
             gcm: None,
             dtls_state: DtlsState::New,
             srtp_gcm: None,
+            srtp_ssrc_states: HashMap::new(),
         })
     }
 
@@ -136,7 +141,93 @@ impl UdpServer {
             return self.handle_dtls_packet(data, peer_addr).await;
         }
 
+        if is_rtp_packet(data) {
+            return self.handle_rtp_packet(data, peer_addr).await;
+        }
+
         info!("ignored unknown data.");
+        Ok(())
+    }
+
+    async fn handle_rtp_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+        let mut reader = BufReader::new(data);
+        let packet = RtpPacket::decode(&mut reader)?;
+
+        // https://datatracker.ietf.org/doc/html/rfc3711#autoid-12
+
+        let ssrc = packet.header.ssrc;
+        let ssrc_state = self
+            .srtp_ssrc_states
+            .get(&ssrc)
+            .ok_or(anyhow!("SrtpSsrcState(ssrc={}) not found.", &ssrc))?;
+
+        let rollover_has_processed = ssrc_state.rollover_has_processed;
+        let local_idx = ssrc_state.index;
+
+        if rollover_has_processed {
+            let local_roc = local_idx.roc;
+            let mut roc_candidates = vec![local_roc, local_roc + 1];
+            if local_roc > 0 {
+                roc_candidates.push(local_roc - 1);
+            }
+
+            let mut best_idx = local_idx;
+            let mut min_diff = u64::MAX;
+            for candidate in roc_candidates {
+                let idx = SrtpPacketIndex {
+                    roc: candidate,
+                    seq: packet.header.sequence_number,
+                };
+                let diff = idx.value().abs_diff(local_idx.value());
+                if diff < min_diff {
+                    min_diff = diff;
+                    best_idx = idx;
+                };
+            }
+
+            let decrypted_packet = self
+                .srtp_gcm
+                .as_ref()
+                .ok_or(anyhow!("srtp_gcm is none."))?
+                .decrypt(packet, best_idx.roc)?;
+            self.handle_decrypted_rtp_packet(decrypted_packet, peer_addr)
+                .await?;
+
+            if best_idx.value() > local_idx.value() {
+                let ssrc_state = self
+                    .srtp_ssrc_states
+                    .get_mut(&ssrc)
+                    .ok_or(anyhow!("SrtpSsrcState(ssrc={}) not found.", &ssrc))?;
+                ssrc_state.index = best_idx;
+            }
+        } else {
+            let decrypted_packet = self
+                .srtp_gcm
+                .as_ref()
+                .ok_or(anyhow!("srtp_gcm is none."))?
+                .decrypt(packet, local_idx.roc)?;
+            self.handle_decrypted_rtp_packet(decrypted_packet, peer_addr)
+                .await?;
+
+            let ssrc_state = self
+                .srtp_ssrc_states
+                .get_mut(&ssrc)
+                .ok_or(anyhow!("SrtpSsrcState(ssrc={}) not found.", &ssrc))?;
+            ssrc_state.rollover_has_processed = true;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_decrypted_rtp_packet(
+        &mut self,
+        packet: RtpPacket,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        match packet.header.payload_type {
+            PayloadType::VP8 => {}
+            _ => warn!("unsupported payload type: {:?}", packet.header.payload_type),
+        }
         Ok(())
     }
 

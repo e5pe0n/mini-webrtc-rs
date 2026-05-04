@@ -1,19 +1,32 @@
 use anyhow::Result;
 
-use crate::{dtls::buffer::BufReader, srtp::header::Header};
+use crate::{dtls::buffer::BufReader, srtp::header::RtpHeader};
 
-pub struct Packet {
-    header: Header,
-    header_size: usize,
-    payload: Vec<u8>,
-    raw: Vec<u8>,
+#[derive(Debug, Clone, Copy)]
+// packet index = roc * 2**16 + seq
+pub struct SrtpPacketIndex {
+    pub roc: u32,
+    pub seq: u16,
 }
 
-impl Packet {
+impl SrtpPacketIndex {
+    pub fn value(&self) -> u64 {
+        (self.roc as u64) << 16 | self.seq as u64
+    }
+}
+
+pub struct RtpPacket {
+    pub header: RtpHeader,
+    pub header_size: usize,
+    pub payload: Vec<u8>,
+    pub raw: Vec<u8>,
+}
+
+impl RtpPacket {
     pub fn decode(reader: &mut BufReader) -> Result<Self> {
         let pos = reader.pos;
         let buf_len = reader.rest_len();
-        let header = Header::decode(reader)?;
+        let header = RtpHeader::decode(reader)?;
         let header_size = header.raw.len();
 
         let mut payload = vec![0u8; reader.rest_len()];
