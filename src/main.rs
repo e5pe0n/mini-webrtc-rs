@@ -1,25 +1,20 @@
-mod dtls;
-mod error;
 mod ice;
 mod sdp;
 mod signaling_server;
-mod srtp;
 mod stun;
 mod udp_server;
 
-use local_ip_address::local_ip;
-
 use anyhow::Result;
+use local_ip_address::local_ip;
 use rcgen::generate_simple_self_signed;
-use sha2::{Digest, Sha256};
 use tracing::info;
 
 use crate::{
-    dtls::common::Fingerprint,
     ice::{IceAgent, IceCandidate},
     stun::StunClient,
 };
 use crate::{signaling_server::SignalingServer, udp_server::UdpServer};
+use dtls::Fingerprint;
 
 const UDP_SERVER_PORT: u64 = 4433;
 const STUN_SERVER_ADDRESS: &'static str = "stun.l.google.com:19302";

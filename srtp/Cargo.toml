@@ -1,0 +1,13 @@
+[package]
+name = "srtp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { workspace = true }
+dtls = {workspace = true}
+mini-webrtc-derive = { workspace = true }
+
+aes = {workspace = true}
+aes-gcm = {workspace = true}
+anyhow = {workspace = true}

@@ -51,12 +51,12 @@ pub fn derive_try_from_primitive(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl TryFrom<#from_type> for #enum_name {
-            type Error = crate::error::Error;
+            type Error = common::error::Error;
 
             fn try_from(value: #from_type) -> Result<Self, Self::Error> {
                 match value {
                     #(#match_arms,)*
-                    _ => Err(crate::error::Error::InvalidEnumVariantError {
+                    _ => Err(common::error::Error::InvalidEnumVariantError {
                         enum_name: stringify!(#enum_name).to_string(),
                         value: format!("{:?}", value),
                     }),

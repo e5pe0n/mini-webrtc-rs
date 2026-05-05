@@ -1,13 +1,10 @@
+use dtls::Fingerprint;
+use rand::RngExt;
 use std::net::IpAddr;
 
-use rand::Rng;
-
-use crate::{
-    dtls::common::Fingerprint,
-    sdp::{
-        CandidateType, FingerprintType, MediaType, SdpMedia, SdpMediaCandidate, SdpMessage,
-        TransportType,
-    },
+use crate::sdp::{
+    CandidateType, FingerprintType, MediaType, SdpMedia, SdpMediaCandidate, SdpMessage,
+    TransportType,
 };
 
 pub fn generate_ice_ufrag() -> String {
