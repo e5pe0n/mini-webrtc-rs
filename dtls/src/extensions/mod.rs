@@ -1,3 +1,4 @@
+pub mod renegotiation_info;
 pub mod supported_groups;
 pub mod use_extended_master_secret;
 pub mod use_srtp;
@@ -5,8 +6,8 @@ pub mod use_srtp;
 use mini_webrtc_derive::FromPrimitive;
 
 use crate::extensions::{
-    supported_groups::SupportedGroups, use_extended_master_secret::UseExtendedMasterSecret,
-    use_srtp::UseSrtp,
+    renegotiation_info::RenegotiationInfo, supported_groups::SupportedGroups,
+    use_extended_master_secret::UseExtendedMasterSecret, use_srtp::UseSrtp,
 };
 
 // https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
@@ -26,6 +27,7 @@ pub enum ExtensionType {
 
 #[derive(Debug)]
 pub enum Extension {
+    RenegotiationInfo(RenegotiationInfo),
     SupportedGroups(SupportedGroups),
     UseSrtp(UseSrtp),
     UseExtendedMasterSecret(UseExtendedMasterSecret),
@@ -35,6 +37,7 @@ pub enum Extension {
 impl Extension {
     pub fn get_extension_type(&self) -> ExtensionType {
         match self {
+            Self::RenegotiationInfo(_) => ExtensionType::RenegotiationInfo,
             Self::SupportedGroups(_) => ExtensionType::SupportedGroups,
             Self::UseSrtp(_) => ExtensionType::UseSrtp,
             Self::UseExtendedMasterSecret(_) => ExtensionType::UseExtendedMasterSecret,

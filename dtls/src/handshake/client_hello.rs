@@ -4,8 +4,9 @@ use tracing::{debug, info};
 use crate::{
     cipher_suite::CipherSuiteId,
     extensions::{
-        Extension, ExtensionType, supported_groups::SupportedGroups,
-        use_extended_master_secret::UseExtendedMasterSecret, use_srtp::UseSrtp,
+        Extension, ExtensionType, renegotiation_info::RenegotiationInfo,
+        supported_groups::SupportedGroups, use_extended_master_secret::UseExtendedMasterSecret,
+        use_srtp::UseSrtp,
     },
     handshake::random::Random,
     record_header::DtlsVersion,
@@ -89,6 +90,9 @@ impl ClientHello {
                     }
                     ExtensionType::UseExtendedMasterSecret => Extension::UseExtendedMasterSecret(
                         UseExtendedMasterSecret::decode(extension_reader)?,
+                    ),
+                    ExtensionType::RenegotiationInfo => Extension::RenegotiationInfo(
+                        RenegotiationInfo::decode(&mut extension_reader)?,
                     ),
                     _ => {
                         info!("ignore unsupported extension; {extension_type:?}");

@@ -18,7 +18,11 @@ use crate::{
         Aes128GcmEncryptionKeys, Gcm, generate_extended_master_secret, generate_master_secret,
         generate_verify_data,
     },
-    extensions::{Extension, use_srtp::SrtpProtectionProfile},
+    extensions::{
+        Extension, renegotiation_info::RenegotiationInfo,
+        use_extended_master_secret::UseExtendedMasterSecret, use_srtp::SrtpProtectionProfile,
+        use_srtp::UseSrtp,
+    },
     generate_curve_key_pair,
     handshake::{
         certificate::Certificate,
@@ -54,6 +58,7 @@ pub struct DtlsManager {
     curve: Option<ECCurve>,
     srtp_protection_profile: Option<SrtpProtectionProfile>,
     use_extended_master_secret: bool,
+    secure_renegotiation: bool,
     ephemeral_secret: Option<EphemeralSecret>,
     master_secret: Option<Vec<u8>>,
     client_random: Option<Random>,
@@ -84,6 +89,7 @@ impl DtlsManager {
             curve: None,
             srtp_protection_profile: None,
             use_extended_master_secret: false,
+            secure_renegotiation: false,
             ephemeral_secret: None,
             master_secret: None,
             client_random: None,
@@ -223,6 +229,12 @@ impl DtlsManager {
                         {
                             // TODO: set FAILED to dtls state
                         }
+                        if message
+                            .cipher_suite_ids
+                            .contains(&CipherSuiteId::TlsEmptyRenegotiationInfoScsv)
+                        {
+                            self.secure_renegotiation = true;
+                        }
                         self.cipher_suite_id =
                             Some(CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256);
 
@@ -254,6 +266,9 @@ impl DtlsManager {
                                 Extension::UseExtendedMasterSecret(_) => {
                                     self.use_extended_master_secret = true;
                                 }
+                                Extension::RenegotiationInfo(_) => {
+                                    self.secure_renegotiation = true;
+                                }
                                 _ => {
                                     info!("ignore unsupported extension; {extension:?}.");
                                 }
@@ -267,8 +282,29 @@ impl DtlsManager {
                         {
                             // ServerHello
                             // TODO: negotiate dtls version
-                            let message =
-                                ServerHello::new(DtlsVersion::V1_2, server_random.clone());
+                            let mut extensions = vec![];
+                            if self.secure_renegotiation {
+                                extensions.push(Extension::RenegotiationInfo(
+                                    RenegotiationInfo::new(vec![]),
+                                ));
+                            }
+                            if let Some(profile) = self.srtp_protection_profile {
+                                extensions.push(Extension::UseSrtp(UseSrtp {
+                                    srtp_protection_profiles: vec![profile],
+                                    srtp_mki: vec![],
+                                }));
+                            }
+                            if self.use_extended_master_secret {
+                                extensions.push(Extension::UseExtendedMasterSecret(
+                                    UseExtendedMasterSecret {},
+                                ));
+                            }
+
+                            let message = ServerHello::new(
+                                DtlsVersion::V1_2,
+                                server_random.clone(),
+                                extensions,
+                            );
                             self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                                 .await?;
                         }

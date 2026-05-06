@@ -1,5 +1,5 @@
 use anyhow::Result;
-use common::buffer::BufReader;
+use common::buffer::{BufReader, BufWriter};
 
 // https://datatracker.ietf.org/doc/html/rfc5764
 #[derive(Debug)]
@@ -25,6 +25,15 @@ impl UseSrtp {
             srtp_mki: mki.to_vec(),
         })
     }
+
+    pub fn encode(&self, writer: &mut BufWriter) {
+        writer.write_u16((self.srtp_protection_profiles.len() * 2) as u16);
+        for profile in &self.srtp_protection_profiles {
+            writer.write_u16(profile.value());
+        }
+        writer.write_u8(self.srtp_mki.len() as u8);
+        writer.write_bytes(&self.srtp_mki);
+    }
 }
 
 // https://www.iana.org/assignments/srtp-protection/srtp-protection.xhtml
@@ -32,6 +41,15 @@ impl UseSrtp {
 pub enum SrtpProtectionProfile {
     SrtpAeadAes128Gcm(ProtectionProfile),
     Unsupported,
+}
+
+impl SrtpProtectionProfile {
+    pub fn value(&self) -> u16 {
+        match self {
+            Self::SrtpAeadAes128Gcm(profile) => profile.value,
+            Self::Unsupported => 0,
+        }
+    }
 }
 
 impl From<u16> for SrtpProtectionProfile {

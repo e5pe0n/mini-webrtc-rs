@@ -3,6 +3,7 @@ use mini_webrtc_derive::FromPrimitive;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, FromPrimitive)]
 #[from(type = "u16", default = "Unsupported")]
 pub enum CipherSuiteId {
+    TlsEmptyRenegotiationInfoScsv = 0x00ff,
     TlsEcdheEcdsaWithAes128GcmSha256 = 0xc02b,
     Unsupported = 0x0000,
 }
