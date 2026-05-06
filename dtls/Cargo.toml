@@ -18,3 +18,4 @@ rcgen = {workspace = true}
 tokio = {workspace = true}
 p256 = {workspace = true}
 x509-parser = {workspace = true}
+tracing-subscriber = {workspace = true}
