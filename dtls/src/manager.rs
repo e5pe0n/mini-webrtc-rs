@@ -96,6 +96,7 @@ impl DtlsManager {
     pub async fn handle_dtls_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         let mut reader = BufReader::new(data);
         let record_header = RecordHeader::decode(&mut reader)?;
+        debug!("{:?}", record_header);
 
         match record_header.content_type {
             ContentType::ChangeCipherSpec => {

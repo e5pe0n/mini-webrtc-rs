@@ -56,7 +56,7 @@ impl<'a> BufReader<'a> {
     pub fn read_u32(&mut self) -> Result<u32, Error> {
         if self.pos < self.buf.len() {
             let b = u32::from_be_bytes(self.buf[self.pos..self.pos + 4].try_into().unwrap());
-            self.pos += 2;
+            self.pos += 4;
             Ok(b)
         } else {
             Err(Error::BufferOutOfIndexError {
