@@ -28,7 +28,7 @@ impl ServerHello {
     }
 
     pub fn encode(&self, writer: &mut BufWriter) {
-        self.version.encode(writer);
+        writer.write_u16(self.version.into());
         self.random.encode(writer);
         writer.write_u8(self.session_id.len() as u8);
         writer.write_bytes(&self.session_id);

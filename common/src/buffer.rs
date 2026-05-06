@@ -1,6 +1,7 @@
-use std::io::{self, Read};
-
 use crate::error::Error;
+use tracing::debug;
+
+const DEBUG: bool = false;
 
 #[derive(Debug)]
 pub struct BufReader<'a> {
@@ -21,6 +22,11 @@ impl<'a> BufReader<'a> {
         if self.pos < self.buf.len() {
             let b = self.buf[self.pos];
             self.pos += 1;
+
+            if DEBUG {
+                debug!("{}/{}", self.pos, self.buf.len());
+            }
+
             Ok(b)
         } else {
             Err(Error::BufferOutOfIndexError {
@@ -34,6 +40,11 @@ impl<'a> BufReader<'a> {
         if self.pos < self.buf.len() {
             let b = u16::from_be_bytes(self.buf[self.pos..self.pos + 2].try_into().unwrap());
             self.pos += 2;
+
+            if DEBUG {
+                debug!("{}/{}", self.pos, self.buf.len());
+            }
+
             Ok(b)
         } else {
             Err(Error::BufferOutOfIndexError {
@@ -48,7 +59,9 @@ impl<'a> BufReader<'a> {
         let tail = self.read_u8()?;
         let res = ((head as u32) << 1) + (tail as u32);
 
-        self.pos += 3;
+        if DEBUG {
+            debug!("{}/{}", self.pos, self.buf.len());
+        }
 
         Ok(res)
     }
@@ -57,6 +70,11 @@ impl<'a> BufReader<'a> {
         if self.pos < self.buf.len() {
             let b = u32::from_be_bytes(self.buf[self.pos..self.pos + 4].try_into().unwrap());
             self.pos += 4;
+
+            if DEBUG {
+                debug!("{}/{}", self.pos, self.buf.len());
+            }
+
             Ok(b)
         } else {
             Err(Error::BufferOutOfIndexError {
@@ -66,9 +84,21 @@ impl<'a> BufReader<'a> {
         }
     }
 
-    pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), io::Error> {
-        self.buf.read_exact(buf)?;
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error> {
+        if self.pos + buf.len() > self.buf.len() {
+            return Err(Error::BufferOutOfIndexError {
+                pos: self.pos + buf.len(),
+                len: self.buf.len(),
+            });
+        }
+
+        buf.copy_from_slice(&self.buf[self.pos..self.pos + buf.len()]);
         self.pos += buf.len();
+
+        if DEBUG {
+            debug!("{}/{}", self.pos, self.buf.len());
+        }
+
         Ok(())
     }
 }

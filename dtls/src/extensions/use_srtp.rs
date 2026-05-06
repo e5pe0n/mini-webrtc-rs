@@ -16,7 +16,7 @@ impl UseSrtp {
             profiles.push(SrtpProtectionProfile::from(reader.read_u16()?));
         }
 
-        let mki_length = reader.read_u16()?;
+        let mki_length = reader.read_u8()?;
         let mut mki = vec![0u8; mki_length as usize];
         reader.read_exact(&mut mki)?;
 

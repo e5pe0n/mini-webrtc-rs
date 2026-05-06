@@ -141,8 +141,8 @@ impl Gcm {
             additional_data[..2].copy_from_slice(&record_header.epoch.to_be_bytes());
 
             additional_data[8] = record_header.content_type as u8;
-            additional_data[9] = record_header.version.major as u8;
-            additional_data[10] = record_header.version.minor as u8;
+            let version: u16 = record_header.version.into();
+            additional_data[9..11].copy_from_slice(&version.to_be_bytes());
             additional_data[11..].copy_from_slice(&(record_header.length).to_be_bytes());
 
             additional_data

@@ -17,32 +17,20 @@ pub enum ContentType {
 const DTLS_VERSION_1_0: u16 = 0xfeff;
 const DTLS_VERSION_1_2: u16 = 0xfefd;
 
-#[derive(Debug, Clone)]
-pub struct DtlsVersion {
-    pub major: u8,
-    pub minor: u8,
+#[derive(TryFromPrimitive)]
+#[try_from(type = "u16")]
+#[derive(Debug, Clone, Copy)]
+pub enum DtlsVersion {
+    V1_0 = 0xfeff,
+    V1_2 = 0xfefd,
 }
 
-impl TryFrom<u16> for DtlsVersion {
-    type Error = anyhow::Error;
-
-    fn try_from(val: u16) -> Result<Self, Self::Error> {
-        match val {
-            DTLS_VERSION_1_0 => Ok(DtlsVersion { major: 1, minor: 0 }),
-            DTLS_VERSION_1_2 => Ok(DtlsVersion { major: 1, minor: 2 }),
-            _ => Err(anyhow!("invalid dtls version: {}", val)),
+impl Into<u16> for DtlsVersion {
+    fn into(self) -> u16 {
+        match self {
+            Self::V1_0 => self as u16,
+            Self::V1_2 => self as u16,
         }
-    }
-}
-
-impl DtlsVersion {
-    pub fn new(major: u8, minor: u8) -> Self {
-        Self { major, minor }
-    }
-
-    pub fn encode(&self, writer: &mut BufWriter) {
-        writer.write_u8(self.major);
-        writer.write_u8(self.minor);
     }
 }
 
@@ -98,7 +86,7 @@ impl RecordHeader {
 
     pub fn encode(&self, writer: &mut BufWriter) {
         writer.write_u8(self.content_type as u8);
-        self.version.encode(writer);
+        writer.write_u16(self.version.into());
         writer.write_u16(self.epoch);
         // Write 48-bit sequence number as u16 + u32
         writer.write_u16((self.sequence_number >> 32) as u16);

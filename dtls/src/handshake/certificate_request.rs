@@ -33,16 +33,14 @@ impl CertificateRequest {
             writer.write_u8((*t).into());
         }
 
-        writer.write_u16(self.supported_algo_pairs.len() as u16);
+        let mut algo_pairs_writer = BufWriter::new();
         for p in &self.supported_algo_pairs {
-            p.encode(writer);
+            p.encode(&mut algo_pairs_writer);
         }
+        writer.write_u16(algo_pairs_writer.buf_ref().len() as u16);
+        writer.write_bytes(algo_pairs_writer.buf_ref());
 
         writer.write_u16(self.certificate_authorities.len() as u16);
-        // TODO: encode CA
-        // for ca in &self.certificate_authorities {
-        //     writer.write_bytes(ca);
-        // }
     }
 }
 

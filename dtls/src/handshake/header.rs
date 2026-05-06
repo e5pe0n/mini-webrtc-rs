@@ -20,6 +20,7 @@ pub enum HandshakeType {
     Finished = 20,
 }
 
+#[derive(Debug)]
 pub struct HandshakeHeader {
     pub handshake_type: HandshakeType,
     pub length: u32, // u24

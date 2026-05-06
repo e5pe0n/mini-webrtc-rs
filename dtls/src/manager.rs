@@ -175,24 +175,27 @@ impl DtlsManager {
         peer_addr: SocketAddr,
     ) -> Result<()> {
         let handshake_header = HandshakeHeader::decode(reader)?;
+        debug!("{:?}", handshake_header);
 
         // only handshake message part; exclude record header
         self.received_handshake_messages.insert(
             handshake_header.handshake_type,
             reader.buf[reader.pos..].to_vec(),
         );
+        debug!("pos: {}, len: {}", reader.pos, reader.buf.len());
 
         match handshake_header.handshake_type {
             HandshakeType::ClientHello => {
-                let message = ClientHello::decode(reader)?;
                 debug!("  -> ClientHello from {}", peer_addr);
+                let message = ClientHello::decode(reader)?;
+                debug!("{message:?}");
                 match &self.handshake_flight {
                     HandshakeFlight::Flight0 => {
                         debug!("  <- Sending HelloVerifyRequest to {}", peer_addr);
                         // TODO: set CONNECTING to dtls state
 
                         // TODO: negotiate dtls version
-                        let message = HelloVerifyRequest::new(DtlsVersion::new(1, 2));
+                        let message = HelloVerifyRequest::new(DtlsVersion::V1_2);
                         let cookie = message.cookie.clone();
 
                         self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
@@ -202,9 +205,15 @@ impl DtlsManager {
                         self.cookie = Some(cookie);
                     }
                     HandshakeFlight::Flight2 => {
-                        if message.cookie
-                            != self.cookie.clone().ok_or(anyhow!("cookie is none."))?
-                        {
+                        if message.cookie.is_none() {
+                            // TODO: set FAILED to dtls state
+                            anyhow::bail!(anyhow!("message.cookie is none."))
+                        }
+                        if self.cookie.clone().is_none() {
+                            // TODO: set FAILED to dtls state
+                            anyhow::bail!(anyhow!("self.cookie is none."))
+                        }
+                        if message.cookie.unwrap() != self.cookie.clone().unwrap() {
                             // TODO: set FAILED to dtls state
                         }
                         // TODO: negotiate cipher suite
@@ -259,7 +268,7 @@ impl DtlsManager {
                             // ServerHello
                             // TODO: negotiate dtls version
                             let message =
-                                ServerHello::new(DtlsVersion::new(1, 2), server_random.clone());
+                                ServerHello::new(DtlsVersion::V1_2, server_random.clone());
                             self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                                 .await?;
                         }
@@ -450,7 +459,7 @@ impl DtlsManager {
         // Create Record Header
         let mut record_header = RecordHeader::new(
             message.get_content_type(),
-            DtlsVersion::new(1, 2),
+            DtlsVersion::V1_2,
             0,
             self.sequence_number,
             encoded_message.len() as u16,
