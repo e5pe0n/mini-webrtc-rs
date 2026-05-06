@@ -71,7 +71,7 @@ impl RecordHeader {
 
         let sequence_number1 = reader.read_u16()?;
         let sequence_number2 = reader.read_u32()?;
-        let sequence_number = ((sequence_number1 as u64) << 4) + (sequence_number2 as u64);
+        let sequence_number = ((sequence_number1 as u64) << 32) + (sequence_number2 as u64);
 
         let length = reader.read_u16()?;
 

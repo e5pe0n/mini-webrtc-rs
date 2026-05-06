@@ -391,8 +391,10 @@ impl UdpServer {
                 let encoded_message = handshake_writer.buf();
 
                 // only handshake message part; exclude record header
-                self.received_handshake_messages
+                self.sent_handshake_messages
                     .insert(message.get_handshake_type(), encoded_message.clone());
+
+                self.message_seq = self.message_seq.saturating_add(1);
                 encoded_message
             }
             DtlsMessage::ChangeCipherSpec(message) => {
@@ -406,7 +408,7 @@ impl UdpServer {
         let mut record_header = RecordHeader::new(
             message.get_content_type(),
             DtlsVersion::new(1, 2),
-            0,
+            self.epoch,
             self.sequence_number,
             encoded_message.len() as u16,
         );
@@ -427,7 +429,7 @@ impl UdpServer {
 
         self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
 
-        self.message_seq += 1;
+        self.sequence_number = self.sequence_number.saturating_add(1);
         Ok(())
     }
 
@@ -465,6 +467,8 @@ impl UdpServer {
                         self.cookie = Some(cookie);
                     }
                     HandshakeFlight::Flight2 => {
+                        self.message_seq = handshake_header.message_seq.saturating_add(1);
+
                         if message.cookie
                             != self.cookie.clone().ok_or(anyhow!("cookie is none."))?
                         {

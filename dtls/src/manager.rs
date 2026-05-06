@@ -44,9 +44,9 @@ pub struct DtlsManager {
     fingerprint: Fingerprint,
     state: DtlsState,
     handshake_flight: HandshakeFlight,
-    message_seq: u16,
-    sequence_number: u64,
-    epoch: u16,
+    epoch: u16,           // increment per ChangeCipherSpec and reset sequence_number to 0
+    sequence_number: u64, // increment per sending a record
+    message_seq: u16,     // increment per handshake message
     received_handshake_messages: HashMap<HandshakeType, Vec<u8>>,
     sent_handshake_messages: HashMap<HandshakeType, Vec<u8>>,
     cookie: Option<Cookie>,
@@ -445,8 +445,10 @@ impl DtlsManager {
                 let encoded_message = handshake_writer.buf();
 
                 // only handshake message part; exclude record header
-                self.received_handshake_messages
+                self.sent_handshake_messages
                     .insert(message.get_handshake_type(), encoded_message.clone());
+
+                self.message_seq += 1;
                 encoded_message
             }
             DtlsMessage::ChangeCipherSpec(message) => {
@@ -460,7 +462,7 @@ impl DtlsManager {
         let mut record_header = RecordHeader::new(
             message.get_content_type(),
             DtlsVersion::V1_2,
-            0,
+            self.epoch,
             self.sequence_number,
             encoded_message.len() as u16,
         );
@@ -481,7 +483,7 @@ impl DtlsManager {
 
         self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
 
-        self.message_seq += 1;
+        self.sequence_number += 1;
         Ok(())
     }
 
