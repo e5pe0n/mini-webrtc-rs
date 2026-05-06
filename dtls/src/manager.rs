@@ -183,11 +183,28 @@ impl DtlsManager {
         let handshake_header = HandshakeHeader::decode(reader)?;
         debug!("{:?}", handshake_header);
 
+        // TODO: handle fragmentation
+        let is_fragmented = handshake_header.fragment_offset != 0
+            || handshake_header.fragment_length != handshake_header.length;
+        let fragment_length = handshake_header.fragment_length as usize;
+        if is_fragmented || reader.rest_len() < fragment_length {
+            warn!(
+                "skip fragmented/incomplete handshake message; type={:?}, len={}, fragment_offset={}, fragment_length={}, remaining={}",
+                handshake_header.handshake_type,
+                handshake_header.length,
+                handshake_header.fragment_offset,
+                handshake_header.fragment_length,
+                reader.rest_len(),
+            );
+            return Ok(());
+        }
+
+        let payload_end = reader.pos + fragment_length;
+        let payload = reader.buf[reader.pos..payload_end].to_vec();
+
         // only handshake message part; exclude record header
-        self.received_handshake_messages.insert(
-            handshake_header.handshake_type,
-            reader.buf[reader.pos..].to_vec(),
-        );
+        self.received_handshake_messages
+            .insert(handshake_header.handshake_type, payload);
         debug!("pos: {}, len: {}", reader.pos, reader.buf.len());
 
         match handshake_header.handshake_type {

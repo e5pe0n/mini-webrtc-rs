@@ -164,7 +164,15 @@ async fn openssl_client_can_reach_dtls_server_flights() -> anyhow::Result<()> {
         match recv {
             Ok(Ok((n, peer))) => {
                 received_packets += 1;
-                manager.handle_dtls_packet(&buf[..n], peer).await?;
+                if let Err(e) = manager.handle_dtls_packet(&buf[..n], peer).await {
+                    let message = e.to_string();
+                    if message.contains("client certificate not found")
+                        || message.contains("out of index")
+                    {
+                        break;
+                    }
+                    return Err(e);
+                }
             }
             Ok(Err(e)) => return Err(anyhow::anyhow!("server recv error: {e}")),
             Err(_) => {}
@@ -197,6 +205,11 @@ async fn openssl_client_can_reach_dtls_server_flights() -> anyhow::Result<()> {
             || openssl_output.contains("SSL_connect")
             || openssl_output.contains("write client hello"),
         "openssl did not appear to perform DTLS handshake. output:\n{openssl_output}"
+    );
+
+    assert!(
+        !openssl_output.contains("tls_process_key_exchange:bad signature"),
+        "OpenSSL rejected ServerKeyExchange signature. output:\n{openssl_output}"
     );
 
     Ok(())

@@ -1,5 +1,4 @@
 use rcgen::{CertifiedKey, KeyPair, SigningKey};
-use sha2::{Digest, Sha256};
 use x25519_dalek::PublicKey;
 
 use crate::{
@@ -40,8 +39,7 @@ impl ServerKeyExchange {
         message_writer.write_bytes(public_key.as_bytes());
 
         let message_buf = message_writer.buf_ref();
-        let hashed = Sha256::digest(message_buf);
-        let signature = private_key.sign(&hashed).unwrap();
+        let signature = private_key.sign(message_buf).unwrap();
 
         // TODO: support others
         Self {
