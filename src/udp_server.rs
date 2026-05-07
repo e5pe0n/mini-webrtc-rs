@@ -3,7 +3,7 @@ use crate::stun::{
     Attribute, AttributeType, HEADER_BYTES, MAGIC_COOKIE, StunMessage, StunMessageBuilder,
     StunMessageClass, StunMessageMethod, StunMessageType,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use common::buffer::{BufReader, BufWriter};
 use dtls::change_cipher_sec::ChangeCipherSpec;
 use dtls::cipher_suite::CipherSuiteId;
@@ -574,7 +574,8 @@ impl UdpServer {
                 }
             }
             HandshakeType::Certificate => {
-                let message = Certificate::decode(reader)?;
+                let message = Certificate::decode(reader)
+                    .context("UdpServer::handle_handshake_message: decode Certificate")?;
                 let cert = &message.certificates[0];
                 let fingerprint = Fingerprint::new(cert);
                 let remote_peer = self

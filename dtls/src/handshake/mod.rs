@@ -11,6 +11,7 @@ pub mod context;
 pub mod finished;
 pub mod header;
 pub mod hello_verify_request;
+pub mod message_queue;
 pub mod random;
 pub mod server_hello;
 pub mod server_hello_done;

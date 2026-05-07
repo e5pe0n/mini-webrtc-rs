@@ -92,8 +92,10 @@ impl Aes128GcmEncryptionKeys {
         Aes128GcmEncryptionKeys {
             client_write_key: key_material[..prf_key_len].to_vec(),
             server_write_key: key_material[prf_key_len..prf_key_len * 2].to_vec(),
-            client_write_iv: key_material[prf_key_len * 2..prf_key_len * 3].to_vec(),
-            server_write_iv: key_material[prf_key_len * 3..prf_key_len * 4].to_vec(),
+            client_write_iv: key_material[prf_key_len * 2..prf_key_len * 2 + prf_iv_len].to_vec(),
+            server_write_iv: key_material
+                [prf_key_len * 2 + prf_iv_len..prf_key_len * 2 + prf_iv_len * 2]
+                .to_vec(),
         }
     }
 }

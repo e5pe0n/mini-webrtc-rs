@@ -1,5 +1,7 @@
 use crate::handshake::{HandshakeMessage, header::HandshakeType};
+use anyhow::Context;
 use common::buffer::{BufReader, BufWriter};
+use tracing::debug;
 
 #[derive(Debug)]
 pub struct Certificate {
@@ -24,12 +26,25 @@ impl Certificate {
     }
 
     pub fn decode(reader: &mut BufReader) -> anyhow::Result<Self> {
-        let length = reader.read_u24()?;
+        let certificates_length = reader.read_u24().with_context(|| {
+            format!(
+                "Certificate::decode: read certificate_list_length at pos={}",
+                reader.pos
+            )
+        })? as usize;
         let mut certificates: Vec<Vec<u8>> = vec![];
-        for _ in 0..length {
-            let cert_len = reader.read_u24()?;
+        while reader.pos < certificates_length {
+            let cert_len = reader.read_u24().with_context(|| {
+                format!(
+                    "Certificate::decode: read certificate[{}] length at pos={}",
+                    certificates.len(),
+                    reader.pos
+                )
+            })?;
             let mut cert: Vec<u8> = vec![0u8; cert_len as usize];
-            reader.read_exact(&mut cert)?;
+            reader
+                .read_exact(&mut cert)
+                .with_context(|| format!("Certificate::decode: read certificate[{}] body (cert_len={cert_len}) at pos={}", certificates.len(), reader.pos))?;
             certificates.push(cert);
         }
         Ok(Self { certificates })

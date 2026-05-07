@@ -1,6 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use common::buffer::{BufReader, BufWriter};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -10,6 +10,7 @@ use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
+use crate::handshake::message_queue::HandshakeMessageQueue;
 use crate::{
     Cookie, DtlsMessage, DtlsState, ECCurve, Fingerprint, HashAlgorithm, SignatureAlgorithm,
     change_cipher_sec::ChangeCipherSpec,
@@ -65,6 +66,7 @@ pub struct DtlsManager {
     server_random: Option<Random>,
     client_certificate: Option<Vec<u8>>,
     gcm: Option<Gcm>,
+    handshake_message_queue: HandshakeMessageQueue,
 }
 
 impl DtlsManager {
@@ -96,6 +98,7 @@ impl DtlsManager {
             server_random: None,
             client_certificate: None,
             gcm: None,
+            handshake_message_queue: HandshakeMessageQueue::new(),
         }
     }
 
@@ -180,95 +183,96 @@ impl DtlsManager {
         reader: &'_ mut BufReader<'_>,
         peer_addr: SocketAddr,
     ) -> Result<()> {
+        let pos = reader.pos;
         let handshake_header = HandshakeHeader::decode(reader)?;
         debug!("{:?}", handshake_header);
+        let handshake_header_raw = reader.buf[pos..reader.pos].to_vec();
 
-        // TODO: handle fragmentation
-        let is_fragmented = handshake_header.fragment_offset != 0
-            || handshake_header.fragment_length != handshake_header.length;
-        let fragment_length = handshake_header.fragment_length as usize;
-        if is_fragmented || reader.rest_len() < fragment_length {
-            warn!(
-                "skip fragmented/incomplete handshake message; type={:?}, len={}, fragment_offset={}, fragment_length={}, remaining={}",
-                handshake_header.handshake_type,
-                handshake_header.length,
-                handshake_header.fragment_offset,
-                handshake_header.fragment_length,
+        let fragment_len = handshake_header.fragment_length as usize;
+        if reader.rest_len() < fragment_len {
+            anyhow::bail!(
+                "invalid handshake fragment length: rest_len={}, fragment_len={}",
                 reader.rest_len(),
+                fragment_len
             );
-            return Ok(());
         }
+        let payload = &reader.buf[reader.pos..reader.pos + fragment_len];
+        reader.pos += fragment_len;
+        let messages = self.handshake_message_queue.push(
+            handshake_header.clone(),
+            &handshake_header_raw,
+            &payload,
+        );
 
-        let payload_end = reader.pos + fragment_length;
-        let payload = reader.buf[reader.pos..payload_end].to_vec();
+        for message in messages {
+            // only handshake message part; exclude record header
+            self.received_handshake_messages
+                .insert(message.handshake_header.handshake_type, message.raw());
 
-        // only handshake message part; exclude record header
-        self.received_handshake_messages
-            .insert(handshake_header.handshake_type, payload);
-        debug!("pos: {}, len: {}", reader.pos, reader.buf.len());
+            let mut message_reader = BufReader::new(&message.payload);
 
-        match handshake_header.handshake_type {
-            HandshakeType::ClientHello => {
-                debug!("  -> ClientHello from {}", peer_addr);
-                let message = ClientHello::decode(reader)?;
-                debug!("{message:?}");
-                match &self.handshake_flight {
-                    HandshakeFlight::Flight0 => {
-                        debug!("  <- Sending HelloVerifyRequest to {}", peer_addr);
-                        // TODO: set CONNECTING to dtls state
+            match message.handshake_header.handshake_type {
+                HandshakeType::ClientHello => {
+                    debug!("  -> ClientHello from {}", peer_addr);
+                    let message = ClientHello::decode(&mut message_reader)?;
+                    debug!("{message:?}");
+                    match &self.handshake_flight {
+                        HandshakeFlight::Flight0 => {
+                            debug!("  <- Sending HelloVerifyRequest to {}", peer_addr);
+                            // TODO: set CONNECTING to dtls state
 
-                        // TODO: negotiate dtls version
-                        let message = HelloVerifyRequest::new(DtlsVersion::V1_2);
-                        let cookie = message.cookie.clone();
+                            // TODO: negotiate dtls version
+                            let message = HelloVerifyRequest::new(DtlsVersion::V1_2);
+                            let cookie = message.cookie.clone();
 
-                        self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
-                            .await?;
+                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
+                                .await?;
 
-                        self.handshake_flight = HandshakeFlight::Flight2;
-                        self.cookie = Some(cookie);
-                    }
-                    HandshakeFlight::Flight2 => {
-                        if message.cookie.is_none() {
-                            // TODO: set FAILED to dtls state
-                            anyhow::bail!(anyhow!("message.cookie is none."))
+                            self.handshake_flight = HandshakeFlight::Flight2;
+                            self.cookie = Some(cookie);
                         }
-                        if self.cookie.clone().is_none() {
-                            // TODO: set FAILED to dtls state
-                            anyhow::bail!(anyhow!("self.cookie is none."))
-                        }
-                        if message.cookie.unwrap() != self.cookie.clone().unwrap() {
-                            // TODO: set FAILED to dtls state
-                        }
-                        // TODO: negotiate cipher suite
-                        if !message
-                            .cipher_suite_ids
-                            .contains(&CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256)
-                        {
-                            // TODO: set FAILED to dtls state
-                        }
-                        if message
-                            .cipher_suite_ids
-                            .contains(&CipherSuiteId::TlsEmptyRenegotiationInfoScsv)
-                        {
-                            self.secure_renegotiation = true;
-                        }
-                        self.cipher_suite_id =
-                            Some(CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256);
+                        HandshakeFlight::Flight2 => {
+                            if message.cookie.is_none() {
+                                // TODO: set FAILED to dtls state
+                                anyhow::bail!(anyhow!("message.cookie is none."))
+                            }
+                            if self.cookie.clone().is_none() {
+                                // TODO: set FAILED to dtls state
+                                anyhow::bail!(anyhow!("self.cookie is none."))
+                            }
+                            if message.cookie.unwrap() != self.cookie.clone().unwrap() {
+                                // TODO: set FAILED to dtls state
+                            }
+                            // TODO: negotiate cipher suite
+                            if !message
+                                .cipher_suite_ids
+                                .contains(&CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256)
+                            {
+                                // TODO: set FAILED to dtls state
+                            }
+                            if message
+                                .cipher_suite_ids
+                                .contains(&CipherSuiteId::TlsEmptyRenegotiationInfoScsv)
+                            {
+                                self.secure_renegotiation = true;
+                            }
+                            self.cipher_suite_id =
+                                Some(CipherSuiteId::TlsEcdheEcdsaWithAes128GcmSha256);
 
-                        // TODO: handle extensions
-                        for extension in message.extensions {
-                            match extension {
-                                Extension::SupportedGroups(value) => {
-                                    let curve = value
-                                        .curves
-                                        .iter()
-                                        // TODO: negotiate curve
-                                        .find(|curve| **curve == ECCurve::X25519)
-                                        .ok_or(anyhow!("ECCurve::X25519 not found."))?;
-                                    self.curve = Some(*curve);
-                                }
-                                Extension::UseSrtp(value) => {
-                                    let profile = value
+                            // TODO: handle extensions
+                            for extension in message.extensions {
+                                match extension {
+                                    Extension::SupportedGroups(value) => {
+                                        let curve = value
+                                            .curves
+                                            .iter()
+                                            // TODO: negotiate curve
+                                            .find(|curve| **curve == ECCurve::X25519)
+                                            .ok_or(anyhow!("ECCurve::X25519 not found."))?;
+                                        self.curve = Some(*curve);
+                                    }
+                                    Extension::UseSrtp(value) => {
+                                        let profile = value
                                         .srtp_protection_profiles
                                         .iter()
                                         .find(|profile| match **profile {
@@ -278,200 +282,219 @@ impl DtlsManager {
                                         .ok_or(anyhow!(
                                             "SrtpProtectionProfile::SrtpAeadAes128Gcm not found."
                                         ))?;
-                                    self.srtp_protection_profile = Some(*profile);
-                                }
-                                Extension::UseExtendedMasterSecret(_) => {
-                                    self.use_extended_master_secret = true;
-                                }
-                                Extension::RenegotiationInfo(_) => {
-                                    self.secure_renegotiation = true;
-                                }
-                                _ => {
-                                    info!("ignore unsupported extension; {extension:?}.");
+                                        self.srtp_protection_profile = Some(*profile);
+                                    }
+                                    Extension::UseExtendedMasterSecret(_) => {
+                                        self.use_extended_master_secret = true;
+                                    }
+                                    Extension::RenegotiationInfo(_) => {
+                                        self.secure_renegotiation = true;
+                                    }
+                                    _ => {
+                                        info!("ignore unsupported extension; {extension:?}.");
+                                    }
                                 }
                             }
-                        }
 
-                        let client_random = message.random;
-                        let server_random = Random::new();
+                            let client_random = message.random;
+                            let server_random = Random::new();
 
-                        self.handshake_flight = HandshakeFlight::Flight4;
-                        {
-                            // ServerHello
-                            // TODO: negotiate dtls version
-                            let mut extensions = vec![];
-                            if self.secure_renegotiation {
-                                extensions.push(Extension::RenegotiationInfo(
-                                    RenegotiationInfo::new(vec![]),
-                                ));
+                            self.handshake_flight = HandshakeFlight::Flight4;
+                            {
+                                // ServerHello
+                                // TODO: negotiate dtls version
+                                let mut extensions = vec![];
+                                if self.secure_renegotiation {
+                                    extensions.push(Extension::RenegotiationInfo(
+                                        RenegotiationInfo::new(vec![]),
+                                    ));
+                                }
+                                if let Some(profile) = self.srtp_protection_profile {
+                                    extensions.push(Extension::UseSrtp(UseSrtp {
+                                        srtp_protection_profiles: vec![profile],
+                                        srtp_mki: vec![],
+                                    }));
+                                }
+                                if self.use_extended_master_secret {
+                                    extensions.push(Extension::UseExtendedMasterSecret(
+                                        UseExtendedMasterSecret {},
+                                    ));
+                                }
+
+                                let message = ServerHello::new(
+                                    DtlsVersion::V1_2,
+                                    server_random.clone(),
+                                    extensions,
+                                );
+                                self.send_message(
+                                    DtlsMessage::Handshake(Box::new(message)),
+                                    peer_addr,
+                                )
+                                .await?;
                             }
-                            if let Some(profile) = self.srtp_protection_profile {
-                                extensions.push(Extension::UseSrtp(UseSrtp {
-                                    srtp_protection_profiles: vec![profile],
-                                    srtp_mki: vec![],
-                                }));
+                            {
+                                // Server Certificate
+                                let message =
+                                    Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
+                                self.send_message(
+                                    DtlsMessage::Handshake(Box::new(message)),
+                                    peer_addr,
+                                )
+                                .await?;
                             }
-                            if self.use_extended_master_secret {
-                                extensions.push(Extension::UseExtendedMasterSecret(
-                                    UseExtendedMasterSecret {},
-                                ));
+                            let ephemeral_secret = {
+                                // ServerKeyExchange
+                                let curve_key_pair = generate_curve_key_pair();
+                                let message = ServerKeyExchange::new(
+                                    curve_key_pair.public_key,
+                                    &self.certified_key,
+                                    &client_random,
+                                    &server_random,
+                                );
+                                self.send_message(
+                                    DtlsMessage::Handshake(Box::new(message)),
+                                    peer_addr,
+                                )
+                                .await?;
+                                curve_key_pair.secret
+                            };
+                            {
+                                // Certificate Request
+                                let message = CertificateRequest::new();
+                                self.send_message(
+                                    DtlsMessage::Handshake(Box::new(message)),
+                                    peer_addr,
+                                )
+                                .await?;
+                            }
+                            {
+                                // ServerHelloDone
+                                let message = ServerHelloDone::new();
+                                self.send_message(
+                                    DtlsMessage::Handshake(Box::new(message)),
+                                    peer_addr,
+                                )
+                                .await?;
                             }
 
-                            let message = ServerHello::new(
-                                DtlsVersion::V1_2,
-                                server_random.clone(),
-                                extensions,
-                            );
-                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
-                                .await?;
+                            self.ephemeral_secret = Some(ephemeral_secret);
+                            self.client_random = Some(client_random);
+                            self.server_random = Some(server_random);
                         }
-                        {
-                            // Server Certificate
-                            let message =
-                                Certificate::new(vec![self.certified_key.cert.der().to_vec()]);
-                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
-                                .await?;
-                        }
-                        let ephemeral_secret = {
-                            // ServerKeyExchange
-                            let curve_key_pair = generate_curve_key_pair();
-                            let message = ServerKeyExchange::new(
-                                curve_key_pair.public_key,
-                                &self.certified_key,
-                                &client_random,
-                                &server_random,
-                            );
-                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
-                                .await?;
-                            curve_key_pair.secret
-                        };
-                        {
-                            // Certificate Request
-                            let message = CertificateRequest::new();
-                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
-                                .await?;
-                        }
-                        {
-                            // ServerHelloDone
-                            let message = ServerHelloDone::new();
-                            self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
-                                .await?;
-                        }
-
-                        self.ephemeral_secret = Some(ephemeral_secret);
-                        self.client_random = Some(client_random);
-                        self.server_random = Some(server_random);
+                        _ => warn!(
+                            "invalid flight for ClientHello; {:?}",
+                            &self.handshake_flight
+                        ),
                     }
-                    _ => warn!(
-                        "invalid flight for ClientHello; {:?}",
-                        &self.handshake_flight
-                    ),
                 }
-            }
-            HandshakeType::Certificate => {
-                let message = Certificate::decode(reader)?;
-                let cert = &message.certificates[0];
-                let fingerprint = Fingerprint::new(cert);
-                if fingerprint.to_string() != self.fingerprint.to_string() {
-                    // TODO: set FAILED to dtls state
+                HandshakeType::Certificate => {
+                    let message = Certificate::decode(&mut message_reader)
+                        .context("DtlsManager::handle_handshake_message: decode Certificate")?;
+                    let cert = &message.certificates[0];
+                    let fingerprint = Fingerprint::new(cert);
+                    if fingerprint.to_string() != self.fingerprint.to_string() {
+                        // TODO: set FAILED to dtls state
+                    }
+                    self.client_certificate = Some(cert.clone());
                 }
-                self.client_certificate = Some(cert.clone());
-            }
-            HandshakeType::ClientKeyExchange => {
-                debug!("  -> ClientKeyExchange from {}", peer_addr);
-                let message = ClientKeyExchange::decode(reader)?;
-                let client_public_key = message.public_key;
+                HandshakeType::ClientKeyExchange => {
+                    debug!("  -> ClientKeyExchange from {}", peer_addr);
+                    let message = ClientKeyExchange::decode(&mut message_reader).context(
+                        "DtlsManager::handle_handshake_message: decode ClientKeyExchange",
+                    )?;
+                    let client_public_key = message.public_key;
 
-                let client_public_key: [u8; 32] = client_public_key
-                    .try_into()
-                    .or(Err(anyhow!("failed to convert vec into array.")))?;
-                let pre_master_secret = self
-                    .ephemeral_secret
-                    .take()
-                    .ok_or(anyhow!("ephemeral secret is none."))?
-                    .diffie_hellman(&PublicKey::from(client_public_key));
-                let client_random = self
-                    .client_random
-                    .ok_or(anyhow!("client random is none."))?;
-                let server_random = self
-                    .server_random
-                    .ok_or(anyhow!("server random is none."))?;
+                    let client_public_key: [u8; 32] = client_public_key
+                        .try_into()
+                        .or(Err(anyhow!("failed to convert vec into array.")))?;
+                    let pre_master_secret = self
+                        .ephemeral_secret
+                        .take()
+                        .ok_or(anyhow!("ephemeral secret is none."))?
+                        .diffie_hellman(&PublicKey::from(client_public_key));
+                    let client_random = self
+                        .client_random
+                        .ok_or(anyhow!("client random is none."))?;
+                    let server_random = self
+                        .server_random
+                        .ok_or(anyhow!("server random is none."))?;
 
-                let master_secret = if self.use_extended_master_secret {
-                    let handshake_messages = self.concat_handshake_messages(false, false)?;
-                    let handshake_hash = Sha256::digest(handshake_messages);
-                    generate_extended_master_secret(pre_master_secret, handshake_hash)
-                } else {
-                    generate_master_secret(pre_master_secret, &client_random, &server_random)
-                };
+                    let master_secret = if self.use_extended_master_secret {
+                        let handshake_messages = self.concat_handshake_messages(false, false)?;
+                        let handshake_hash = Sha256::digest(handshake_messages);
+                        generate_extended_master_secret(pre_master_secret, handshake_hash)
+                    } else {
+                        generate_master_secret(pre_master_secret, &client_random, &server_random)
+                    };
 
-                self.master_secret = Some(master_secret);
+                    self.master_secret = Some(master_secret);
 
-                let encryption_keys = Aes128GcmEncryptionKeys::new(
-                    &self.master_secret.clone().unwrap(),
-                    &client_random,
-                    &server_random,
-                );
-                let gcm = Gcm::new(
-                    &encryption_keys.server_write_key,
-                    &encryption_keys.server_write_iv,
-                    &encryption_keys.client_write_key,
-                    &encryption_keys.client_write_iv,
-                );
-                self.gcm = Some(gcm);
-            }
-            HandshakeType::CertificateVerify => {
-                let message = CertificateVerify::decode(reader)?;
-                if message.algo_pair.hash != HashAlgorithm::Sha256 {
-                    warn!("unsupported hash algo; {:?}", message.algo_pair.hash);
-                    // set dtls state to FAILED
-                }
-                if message.algo_pair.signature != SignatureAlgorithm::Ecdsa {
-                    warn!(
-                        "unsupported signature algo; {:?}",
-                        message.algo_pair.signature
+                    let encryption_keys = Aes128GcmEncryptionKeys::new(
+                        &self.master_secret.clone().unwrap(),
+                        &client_random,
+                        &server_random,
                     );
-                    // set dtls state to FAILED
+                    let gcm = Gcm::new(
+                        &encryption_keys.server_write_key,
+                        &encryption_keys.server_write_iv,
+                        &encryption_keys.client_write_key,
+                        &encryption_keys.client_write_iv,
+                    );
+                    self.gcm = Some(gcm);
                 }
-                let handshake_messages = self.concat_handshake_messages(false, false)?;
-                let handshake_messages_hash = Sha256::digest(handshake_messages);
-                let client_certificate = self
-                    .client_certificate
-                    .clone()
-                    .ok_or(anyhow!("client certificate is none."))?;
-                let (_, x509) = x509_parser::parse_x509_certificate(&client_certificate)?;
-                let verifying_key = VerifyingKey::from_sec1_bytes(x509.public_key().raw)?;
-                let signature = Signature::from_der(&message.signature)?;
-                verifying_key.verify_prehash(&handshake_messages_hash, &signature)?;
-            }
-            HandshakeType::Finished => {
-                let handshake_messages = self.concat_handshake_messages(true, true)?;
-                let handshake_messages_hash = Sha256::digest(handshake_messages);
-                let verify_data = generate_verify_data(
-                    &self.master_secret.clone().unwrap(),
-                    &handshake_messages_hash,
-                );
+                HandshakeType::CertificateVerify => {
+                    let message = CertificateVerify::decode(&mut message_reader)?;
+                    if message.algo_pair.hash != HashAlgorithm::Sha256 {
+                        warn!("unsupported hash algo; {:?}", message.algo_pair.hash);
+                        // set dtls state to FAILED
+                    }
+                    if message.algo_pair.signature != SignatureAlgorithm::Ecdsa {
+                        warn!(
+                            "unsupported signature algo; {:?}",
+                            message.algo_pair.signature
+                        );
+                        // set dtls state to FAILED
+                    }
+                    let handshake_messages = self.concat_handshake_messages(false, false)?;
+                    let handshake_messages_hash = Sha256::digest(handshake_messages);
+                    let client_certificate = self
+                        .client_certificate
+                        .clone()
+                        .ok_or(anyhow!("client certificate is none."))?;
+                    let (_, x509) = x509_parser::parse_x509_certificate(&client_certificate)?;
+                    let verifying_key = VerifyingKey::from_sec1_bytes(x509.public_key().raw)?;
+                    let signature = Signature::from_der(&message.signature)?;
+                    verifying_key.verify_prehash(&handshake_messages_hash, &signature)?;
+                }
+                HandshakeType::Finished => {
+                    let handshake_messages = self.concat_handshake_messages(true, true)?;
+                    let handshake_messages_hash = Sha256::digest(handshake_messages);
+                    let verify_data = generate_verify_data(
+                        &self.master_secret.clone().unwrap(),
+                        &handshake_messages_hash,
+                    );
 
-                self.handshake_flight = HandshakeFlight::Flight6;
+                    self.handshake_flight = HandshakeFlight::Flight6;
 
-                {
-                    // ChangeCipherSuite
-                    let message = ChangeCipherSpec {};
-                    self.send_message(DtlsMessage::ChangeCipherSpec(message), peer_addr)
-                        .await?;
+                    {
+                        // ChangeCipherSuite
+                        let message = ChangeCipherSpec {};
+                        self.send_message(DtlsMessage::ChangeCipherSpec(message), peer_addr)
+                            .await?;
+                    }
+                    {
+                        // Finished response
+                        let message = Finished { verify_data };
+                        self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
+                            .await?;
+                    }
+                    // TODO: set CONNECTED to dtls state
                 }
-                {
-                    // Finished response
-                    let message = Finished { verify_data };
-                    self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
-                        .await?;
-                }
-                // TODO: set CONNECTED to dtls state
+                _ => warn!(
+                    "  -> Unknown handshake type {:?} from {}",
+                    message.handshake_header.handshake_type, peer_addr
+                ),
             }
-            _ => warn!(
-                "  -> Unknown handshake type {:?} from {}",
-                handshake_header.handshake_type, peer_addr
-            ),
         }
 
         Ok(())

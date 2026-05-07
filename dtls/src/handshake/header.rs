@@ -20,7 +20,7 @@ pub enum HandshakeType {
     Finished = 20,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HandshakeHeader {
     pub handshake_type: HandshakeType,
     pub length: u32, // u24
@@ -49,13 +49,9 @@ impl HandshakeHeader {
     pub fn decode(reader: &mut BufReader) -> Result<Self> {
         let handshake_type_u8 = reader.read_u8()?;
         let handshake_type = HandshakeType::try_from(handshake_type_u8)?;
-
         let length = reader.read_u24()?;
-
         let message_seq = reader.read_u16()?;
-
         let fragment_offset = reader.read_u24()?;
-
         let fragment_length = reader.read_u24()?;
 
         Ok(Self {
