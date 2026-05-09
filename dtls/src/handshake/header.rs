@@ -1,10 +1,10 @@
 use anyhow::Result;
-use mini_webrtc_derive::TryFromPrimitive;
+use mini_webrtc_derive::FromPrimitive;
 
 use common::buffer::{BufReader, BufWriter};
 
-#[derive(TryFromPrimitive)]
-#[try_from(type = "u8")]
+#[derive(FromPrimitive)]
+#[from(type = "u8", default = "Unsupported")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HandshakeType {
     HelloRequest = 0,
@@ -18,7 +18,10 @@ pub enum HandshakeType {
     CertificateVerify = 15,
     ClientKeyExchange = 16,
     Finished = 20,
+    Unsupported = 255,
 }
+
+pub const HANDSHAKE_HEADER_BYTES: usize = 12;
 
 #[derive(Debug, Clone)]
 pub struct HandshakeHeader {

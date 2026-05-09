@@ -120,8 +120,7 @@ impl DtlsManager {
             }
             ContentType::Handshake => {
                 debug!("Received Handshake from {}", peer_addr);
-                self.handle_handshake_message(&mut reader, peer_addr)
-                    .await?;
+                self.handle_handshake_message(data, peer_addr).await?;
                 match self.state {
                     DtlsState::Connected => {
                         // on dtls connected handler
@@ -178,31 +177,11 @@ impl DtlsManager {
         }
     }
 
-    async fn handle_handshake_message(
-        &mut self,
-        reader: &'_ mut BufReader<'_>,
-        peer_addr: SocketAddr,
-    ) -> Result<()> {
-        let pos = reader.pos;
-        let handshake_header = HandshakeHeader::decode(reader)?;
-        debug!("{:?}", handshake_header);
-        let handshake_header_raw = reader.buf[pos..reader.pos].to_vec();
-
-        let fragment_len = handshake_header.fragment_length as usize;
-        if reader.rest_len() < fragment_len {
-            anyhow::bail!(
-                "invalid handshake fragment length: rest_len={}, fragment_len={}",
-                reader.rest_len(),
-                fragment_len
-            );
-        }
-        let payload = &reader.buf[reader.pos..reader.pos + fragment_len];
-        reader.pos += fragment_len;
-        let messages = self.handshake_message_queue.push(
-            handshake_header.clone(),
-            &handshake_header_raw,
-            &payload,
-        );
+    async fn handle_handshake_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+        let messages = self
+            .handshake_message_queue
+            .push(data)
+            .context("pushing message")?;
 
         for message in messages {
             // only handshake message part; exclude record header

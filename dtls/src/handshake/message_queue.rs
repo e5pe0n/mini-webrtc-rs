@@ -1,6 +1,12 @@
+use anyhow::{Context, Result};
+use common::buffer::BufReader;
 use std::collections::HashMap;
+use tracing::debug;
 
-use crate::handshake::header::HandshakeHeader;
+use crate::{
+    handshake::header::{HANDSHAKE_HEADER_BYTES, HandshakeHeader},
+    record_header::RecordHeader,
+};
 
 pub struct HandshakeMessageQueue {
     next_message_seq: u16,
@@ -15,20 +21,31 @@ impl HandshakeMessageQueue {
         }
     }
 
-    pub fn push(
-        &mut self,
-        handshake_header: HandshakeHeader,
-        handshake_header_raw: &[u8],
-        payload: &[u8],
-    ) -> Vec<EncodedHandshakeMessage> {
-        if let Some(message) = self.fragments.get_mut(&handshake_header.message_seq) {
-            message.add(handshake_header.fragment_offset, payload);
-        } else {
-            let mut message =
-                EncodedHandshakeMessage::new(handshake_header.clone(), handshake_header_raw);
-            message.add(handshake_header.fragment_offset, payload);
-            self.fragments.insert(handshake_header.message_seq, message);
-        };
+    pub fn push(&mut self, data: &[u8]) -> Result<Vec<EncodedHandshakeMessage>> {
+        let mut reader = BufReader::new(data);
+
+        while reader.rest_len() > 0 {
+            let _ = RecordHeader::decode(&mut reader).context("decode record header")?;
+
+            let handshake_header_raw =
+                reader.buf[reader.pos..reader.pos + HANDSHAKE_HEADER_BYTES].to_vec();
+            let handshake_header = HandshakeHeader::decode(&mut reader)?;
+            debug!("{:?}", handshake_header);
+
+            let mut payload = vec![0u8; handshake_header.fragment_length as usize];
+            reader
+                .read_exact(&mut payload)
+                .context(format!("reading payload; {:?}", handshake_header))?;
+
+            if let Some(message) = self.fragments.get_mut(&handshake_header.message_seq) {
+                message.add(handshake_header.fragment_offset, &payload);
+            } else {
+                let mut message =
+                    EncodedHandshakeMessage::new(handshake_header.clone(), &handshake_header_raw);
+                message.add(handshake_header.fragment_offset, &payload);
+                self.fragments.insert(handshake_header.message_seq, message);
+            };
+        }
 
         let mut res = vec![];
         while let Some(message) = self.fragments.get(&self.next_message_seq)
@@ -38,7 +55,7 @@ impl HandshakeMessageQueue {
             self.fragments.remove(&self.next_message_seq);
             self.next_message_seq += 1;
         }
-        res
+        Ok(res)
     }
 }
 
@@ -61,13 +78,13 @@ impl EncodedHandshakeMessage {
         }
     }
 
-    pub fn add(&mut self, offset: u32, data: &[u8]) {
+    pub fn add(&mut self, offset: u32, payload: &[u8]) {
         let offset = offset as usize;
         if offset >= self.payload.len() {
             return;
         }
-        let length = data.len().min(self.payload.len() - offset);
-        self.payload[offset..offset + length].copy_from_slice(&data[..length]);
+        let length = payload.len().min(self.payload.len() - offset);
+        self.payload[offset..offset + length].copy_from_slice(&payload[..length]);
         self.mask[offset..offset + length].fill(true);
     }
 
