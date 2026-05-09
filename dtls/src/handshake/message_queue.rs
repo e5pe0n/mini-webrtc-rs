@@ -6,7 +6,7 @@ use tracing::debug;
 use crate::{
     crypto::Gcm,
     handshake::header::{HANDSHAKE_HEADER_BYTES, HandshakeHeader},
-    record_header::RecordHeader,
+    record_header::{ContentType, RecordHeader},
 };
 
 pub struct HandshakeMessageQueue {
@@ -29,6 +29,18 @@ impl HandshakeMessageQueue {
             let record_header =
                 RecordHeader::decode(&mut reader).context("decode record header")?;
             debug!("{:?}", record_header);
+
+            match record_header.content_type {
+                // ChangeCipherSpec message might be sent with handshake messages
+                ContentType::ChangeCipherSpec => {
+                    let mut buf = vec![0u8; record_header.length as usize];
+                    reader
+                        .read_exact(&mut buf)
+                        .context("reading change cipher spec message")?;
+                    continue;
+                }
+                _ => {}
+            }
 
             let mut handshake_message = vec![0u8; record_header.length as usize];
             reader

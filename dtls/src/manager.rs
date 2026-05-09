@@ -109,8 +109,9 @@ impl DtlsManager {
 
         match record_header.content_type {
             ContentType::ChangeCipherSpec => {
-                // TODO: handle ChangeCipherSpec
+                // ChangeCipherSpec message might be sent with handshake messages
                 debug!("Received ChangeCipherSpec from {}", peer_addr);
+                self.handle_handshake_message(data, peer_addr).await?;
                 Ok(())
             }
             ContentType::Alert => {
