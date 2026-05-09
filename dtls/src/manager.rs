@@ -4,13 +4,13 @@ use anyhow::{Context, Result, anyhow};
 use common::buffer::{BufReader, BufWriter};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
 use p256::ecdsa::{Signature, VerifyingKey};
+use p256::pkcs8::DecodePublicKey;
 use rcgen::{CertifiedKey, KeyPair};
 use sha2::{Digest, Sha256};
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::handshake::header::HANDSHAKE_HEADER_BYTES;
 use crate::{
     Cookie, DtlsMessage, DtlsState, ECCurve, Fingerprint, HashAlgorithm, SignatureAlgorithm,
     change_cipher_sec::ChangeCipherSpec,
@@ -51,17 +51,22 @@ pub enum EncodedHandshakeMessage {
 #[derive(Debug, Clone)]
 pub struct PlainHandshakeMessage {
     pub handshake_header: HandshakeHeader,
-    pub handshake_header_raw: Vec<u8>,
     pub mask: Vec<bool>,
     pub payload: Vec<u8>,
 }
 
 impl PlainHandshakeMessage {
-    pub fn new(handshake_header: HandshakeHeader, handshake_header_raw: &[u8]) -> Self {
+    pub fn new(handshake_header: HandshakeHeader) -> Self {
         let length = handshake_header.length as usize;
         Self {
-            handshake_header,
-            handshake_header_raw: handshake_header_raw.to_vec(),
+            // Transcript hashes are computed over full handshake messages, not per-fragment headers.
+            handshake_header: HandshakeHeader::new(
+                handshake_header.handshake_type,
+                handshake_header.length,
+                handshake_header.message_seq,
+                0,
+                handshake_header.length,
+            ),
             mask: vec![false; length],
             payload: vec![0u8; length],
         }
@@ -82,7 +87,10 @@ impl PlainHandshakeMessage {
     }
 
     pub fn raw(&self) -> Vec<u8> {
-        vec![self.handshake_header_raw.clone(), self.payload.clone()].concat()
+        let mut writer = BufWriter::new();
+        self.handshake_header.encode(&mut writer);
+        writer.write_bytes(&self.payload);
+        writer.buf()
     }
 }
 
@@ -193,8 +201,6 @@ impl DtlsManager {
                         handshake_message
                     };
                     let mut handshake_message_reader = BufReader::new(&handshake_message);
-                    let handshake_header_raw =
-                        handshake_message_reader.buf[..HANDSHAKE_HEADER_BYTES].to_vec();
                     let handshake_header = HandshakeHeader::decode(&mut handshake_message_reader)?;
                     debug!("{:?}", handshake_header);
 
@@ -206,10 +212,7 @@ impl DtlsManager {
                     if let Some(message) = self.fragments.get_mut(&handshake_header.message_seq) {
                         message.add(handshake_header.fragment_offset, &payload);
                     } else {
-                        let mut message = PlainHandshakeMessage::new(
-                            handshake_header.clone(),
-                            &handshake_header_raw,
-                        );
+                        let mut message = PlainHandshakeMessage::new(handshake_header.clone());
                         message.add(handshake_header.fragment_offset, &payload);
                         self.fragments.insert(handshake_header.message_seq, message);
                     };
@@ -521,9 +524,13 @@ impl DtlsManager {
                     .clone()
                     .ok_or(anyhow!("client certificate is none."))?;
                 let (_, x509) = x509_parser::parse_x509_certificate(&client_certificate)?;
-                let verifying_key = VerifyingKey::from_sec1_bytes(x509.public_key().raw)?;
-                let signature = Signature::from_der(&message.signature)?;
-                verifying_key.verify_prehash(&handshake_messages_hash, &signature)?;
+                let pk = x509.public_key().raw;
+                let verifying_key = VerifyingKey::from_public_key_der(pk)?;
+                let signature = Signature::from_der(&message.signature)
+                    .map_err(|e| anyhow!("CV_PARSE_FAIL: {e}"))?;
+                verifying_key
+                    .verify_prehash(&handshake_messages_hash, &signature)
+                    .map_err(|e| anyhow!("CV_VERIFY_FAIL: {e}"))?;
             }
             HandshakeType::Finished => {
                 let handshake_messages = self.concat_handshake_messages(true, true)?;
@@ -534,7 +541,6 @@ impl DtlsManager {
                 );
 
                 self.handshake_flight = HandshakeFlight::Flight6;
-
                 {
                     // ChangeCipherSuite
                     let message = ChangeCipherSpec {};
@@ -654,6 +660,10 @@ impl DtlsManager {
             self.received_handshake_messages
                 .get(&HandshakeType::Certificate)
                 .ok_or(anyhow!("client certificate not found."))?
+                .clone(),
+            self.received_handshake_messages
+                .get(&HandshakeType::ClientKeyExchange)
+                .ok_or(anyhow!("client key exchange not found."))?
                 .clone(),
             if include_received_certificate_verify {
                 self.received_handshake_messages

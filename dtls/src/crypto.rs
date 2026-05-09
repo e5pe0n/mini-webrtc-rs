@@ -101,6 +101,8 @@ impl Aes128GcmEncryptionKeys {
 }
 
 const GCM_NONCE_LENGTH: usize = 12;
+const GCM_EXPLICIT_NONCE_LENGTH: usize = 8;
+const GCM_TAG_LENGTH: usize = 16;
 
 #[derive(Clone)]
 pub struct Gcm {
@@ -166,9 +168,18 @@ impl Gcm {
     }
 
     pub fn decrypt(&self, record_header: RecordHeader, payload: &[u8]) -> Result<Vec<u8>> {
+        if payload.len() < GCM_EXPLICIT_NONCE_LENGTH + GCM_TAG_LENGTH {
+            anyhow::bail!(
+                "encrypted payload too short; expected at least {} bytes, got {}",
+                GCM_EXPLICIT_NONCE_LENGTH + GCM_TAG_LENGTH,
+                payload.len()
+            );
+        }
+
         let implicit_nonce = self.remote_write_iv[..4].to_vec();
-        let explicit_nonce = payload[..8].to_vec();
+        let explicit_nonce = payload[..GCM_EXPLICIT_NONCE_LENGTH].to_vec();
         let nonce = vec![implicit_nonce, explicit_nonce].concat();
+        let plaintext_len = payload.len() - GCM_EXPLICIT_NONCE_LENGTH - GCM_TAG_LENGTH;
 
         let additional_data = {
             // https://datatracker.ietf.org/doc/html/rfc5246#section-6.2.3.3
@@ -180,12 +191,12 @@ impl Gcm {
             additional_data[8] = record_header.content_type as u8;
             let version: u16 = record_header.version.into();
             additional_data[9..11].copy_from_slice(&version.to_be_bytes());
-            additional_data[11..].copy_from_slice(&(record_header.length).to_be_bytes());
+            additional_data[11..].copy_from_slice(&(plaintext_len as u16).to_be_bytes());
 
             additional_data
         };
 
-        let mut decrypted_payload = vec![0u8; record_header.length as usize];
+        let mut decrypted_payload = payload[GCM_EXPLICIT_NONCE_LENGTH..].to_vec();
         self.remote_gcm
             .decrypt_in_place(
                 Nonce::from_slice(&nonce),
