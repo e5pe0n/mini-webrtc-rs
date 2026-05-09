@@ -102,6 +102,7 @@ impl Aes128GcmEncryptionKeys {
 
 const GCM_NONCE_LENGTH: usize = 12;
 
+#[derive(Clone)]
 pub struct Gcm {
     local_gcm: Aes128Gcm,
     remote_gcm: Aes128Gcm,
@@ -162,6 +163,38 @@ impl Gcm {
         let encrypted_record = vec![explicit_nonce, encrypted_payload].concat();
 
         Ok(encrypted_record)
+    }
+
+    pub fn decrypt(&self, record_header: RecordHeader, payload: &[u8]) -> Result<Vec<u8>> {
+        let implicit_nonce = self.remote_write_iv[..4].to_vec();
+        let explicit_nonce = payload[..8].to_vec();
+        let nonce = vec![implicit_nonce, explicit_nonce].concat();
+
+        let additional_data = {
+            // https://datatracker.ietf.org/doc/html/rfc5246#section-6.2.3.3
+            let mut additional_data = vec![0u8; 13];
+
+            additional_data[..8].copy_from_slice(&record_header.sequence_number.to_be_bytes()); // 48bit
+            additional_data[..2].copy_from_slice(&record_header.epoch.to_be_bytes());
+
+            additional_data[8] = record_header.content_type as u8;
+            let version: u16 = record_header.version.into();
+            additional_data[9..11].copy_from_slice(&version.to_be_bytes());
+            additional_data[11..].copy_from_slice(&(record_header.length).to_be_bytes());
+
+            additional_data
+        };
+
+        let mut decrypted_payload = vec![0u8; record_header.length as usize];
+        self.remote_gcm
+            .decrypt_in_place(
+                Nonce::from_slice(&nonce),
+                &additional_data,
+                &mut decrypted_payload,
+            )
+            .map_err(|err| anyhow!("failed to decrypt dtls message; {err:?}"))?;
+
+        Ok(decrypted_payload)
     }
 }
 

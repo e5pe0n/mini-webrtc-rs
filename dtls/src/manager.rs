@@ -180,7 +180,7 @@ impl DtlsManager {
     async fn handle_handshake_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         let messages = self
             .handshake_message_queue
-            .push(data)
+            .push(data, &self.gcm)
             .context("pushing message")?;
 
         for message in messages {
@@ -419,7 +419,7 @@ impl DtlsManager {
                         &encryption_keys.client_write_key,
                         &encryption_keys.client_write_iv,
                     );
-                    self.gcm = Some(gcm);
+                    self.gcm = Some(gcm.clone());
                 }
                 HandshakeType::CertificateVerify => {
                     let message = CertificateVerify::decode(&mut message_reader)?;

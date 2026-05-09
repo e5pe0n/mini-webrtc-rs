@@ -1,9 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use common::buffer::BufReader;
 use std::collections::HashMap;
 use tracing::debug;
 
 use crate::{
+    crypto::Gcm,
     handshake::header::{HANDSHAKE_HEADER_BYTES, HandshakeHeader},
     record_header::RecordHeader,
 };
@@ -21,19 +22,38 @@ impl HandshakeMessageQueue {
         }
     }
 
-    pub fn push(&mut self, data: &[u8]) -> Result<Vec<EncodedHandshakeMessage>> {
+    pub fn push(&mut self, data: &[u8], gcm: &Option<Gcm>) -> Result<Vec<EncodedHandshakeMessage>> {
         let mut reader = BufReader::new(data);
 
         while reader.rest_len() > 0 {
-            let _ = RecordHeader::decode(&mut reader).context("decode record header")?;
+            let record_header =
+                RecordHeader::decode(&mut reader).context("decode record header")?;
+            debug!("{:?}", record_header);
 
+            let mut handshake_message = vec![0u8; record_header.length as usize];
+            reader
+                .read_exact(&mut handshake_message)
+                .context("read handshake message")?;
+
+            let handshake_message = if record_header.epoch > 0 {
+                let decrypted_handshake_message = match &gcm {
+                    None => {
+                        anyhow::bail!(anyhow!("gcm is none."))
+                    }
+                    Some(gcm) => gcm.decrypt(record_header.clone(), &handshake_message),
+                }?;
+                decrypted_handshake_message
+            } else {
+                handshake_message
+            };
+            let mut handshake_message_reader = BufReader::new(&handshake_message);
             let handshake_header_raw =
-                reader.buf[reader.pos..reader.pos + HANDSHAKE_HEADER_BYTES].to_vec();
-            let handshake_header = HandshakeHeader::decode(&mut reader)?;
+                handshake_message_reader.buf[..HANDSHAKE_HEADER_BYTES].to_vec();
+            let handshake_header = HandshakeHeader::decode(&mut handshake_message_reader)?;
             debug!("{:?}", handshake_header);
 
             let mut payload = vec![0u8; handshake_header.fragment_length as usize];
-            reader
+            handshake_message_reader
                 .read_exact(&mut payload)
                 .context(format!("reading payload; {:?}", handshake_header))?;
 
