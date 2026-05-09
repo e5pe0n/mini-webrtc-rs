@@ -1,3 +1,9 @@
+run local dtls server
+
+```sh
+watchexec -r -e rs,toml -- cargo run -p dtls
+```
+
 create client secret key and X.509 certificate for local client
 
 ```sh
