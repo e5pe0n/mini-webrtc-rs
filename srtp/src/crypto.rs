@@ -3,6 +3,7 @@ use aes::cipher::BlockCipherEncrypt;
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes128Gcm, Key, KeyInit, Nonce};
 use anyhow::{Result, anyhow};
+use common::decode_hex;
 
 use crate::header::RtpHeader;
 use crate::packet::RtpPacket;
@@ -122,16 +123,54 @@ fn aes_cm_key_derivation(
     let block = <Aes128 as aes::cipher::KeyInit>::new_from_slice(master_key)
         .expect("AES-128 master key must be 16 bytes");
 
-    let num_iters = (key_length + master_key.len()) / master_key.len();
+    let num_iters = key_length.div_ceil(master_key.len());
     let mut key = vec![0u8; num_iters * master_key.len()];
     for i in 0..num_iters {
-        x[master_key.len() - 2..].copy_from_slice(&i.to_be_bytes());
-        let ki = (&mut key[i * master_key.len()..(i + 1) * master_key.len()])
+        x[master_key.len() - 2..].copy_from_slice(&(i as u16).to_be_bytes());
+        let ki: &mut aes::cipher::Block<Aes128> = (&mut key
+            [i * master_key.len()..(i + 1) * master_key.len()])
             .try_into()
             .expect("derived AES block must be 16 bytes");
+        ki.copy_from_slice(&x);
         block.encrypt_block(ki);
     }
+    key.truncate(key_length);
     key
+}
+
+#[cfg(test)]
+mod aes_cm_key_derivation_tests {
+    use super::*;
+
+    #[test]
+    fn test_cipher_key() -> Result<()> {
+        // https://datatracker.ietf.org/doc/html/rfc3711#appendix-B.3
+        let master_key = decode_hex("E1F97A0D3E018BE0D64FA32C06DE4139")?;
+        let master_salt = decode_hex("0EC675AD498AFEEBB6960B3AABE6")?;
+        let expected_cipher_key = decode_hex("C61E7A93744F39EE10734AFE3FF7A087")?;
+        let cipher_key = aes_cm_key_derivation(
+            KeyDerivationLabel::SrtpEncryptionKey,
+            &master_key,
+            &master_salt,
+        );
+        assert_eq!(cipher_key, expected_cipher_key);
+        Ok(())
+    }
+
+    #[test]
+    fn test_salt() -> Result<()> {
+        // https://datatracker.ietf.org/doc/html/rfc3711#appendix-B.3
+        let master_key = decode_hex("E1F97A0D3E018BE0D64FA32C06DE4139")?;
+        let master_salt = decode_hex("0EC675AD498AFEEBB6960B3AABE6")?;
+        let expected_salt = decode_hex("30CBBC08863D8C85D49DB34A9AE1")?;
+        let cipher_key = aes_cm_key_derivation(
+            KeyDerivationLabel::SrtpSaltingKey,
+            &master_key,
+            &master_salt,
+        );
+        assert_eq!(cipher_key, expected_salt);
+        Ok(())
+    }
 }
 
 const PRF_DTLS_SRTP_EXPORTER_LABEL: &str = "EXTRACTOR-dtls_srtp";
