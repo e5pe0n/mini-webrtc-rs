@@ -1,0 +1,4 @@
+# ty don't read lab/pyproject.toml when opening project top dir
+[environment]
+root = ["./lab"]
+python = "./lab/.venv"
