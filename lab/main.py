@@ -1,4 +1,5 @@
 import asyncio
+import struct
 from fractions import Fraction
 from typing import Awaitable, Callable, cast
 
@@ -27,8 +28,11 @@ class DummyAudioTrack(MediaStreamTrack):
         return frame
 
 async def run_capture():
-    # Store captured raw SRTP/SRTCP UDP payload buffers
-    captured_packets = []
+    # Capture two views of the same outbound media flow.
+    # - plain_packets: payload passed into RTCDtlsTransport._send_rtp (pre-SRTP protect)
+    # - encrypted_packets: payload sent by RTCIceTransport._send (post-SRTP protect)
+    plain_packets = []
+    encrypted_packets = []
 
     # Local loopback peer setup
     pc_a = RTCPeerConnection()
@@ -45,15 +49,24 @@ async def run_capture():
     # We can still request the AEAD AES-GCM SRTP profile before negotiation.
     dtls_a._srtp_profiles = [SRTP_AEAD_AES_128_GCM]
 
-    # Intercept outbound transport packets before they reach the real UDP socket
-    # We monkey-patch the internal transport send method to capture bytes safely
+    # Intercept pre-protection RTP/RTCP bytes.
     original_send = cast(Callable[[bytes], Awaitable[None]], dtls_a._send_rtp)
 
+    # Intercept wire-level packets emitted by DTLS transport.
+    # This path also carries DTLS handshake records, so filter to RTP/RTCP packet range.
+    original_transport_send = cast(Callable[[bytes], Awaitable[None]], dtls_a.transport._send)
+
+    async def hook_transport_send(data: bytes) -> None:
+        if len(data) > 1 and 127 < data[0] < 192:
+            encrypted_packets.append(data)
+        await original_transport_send(data)
+
     async def hook_send(data: bytes) -> None:
-        captured_packets.append(data)
+        plain_packets.append(data)
         await original_send(data)
 
     setattr(dtls_a, "_send_rtp", hook_send)
+    setattr(dtls_a.transport, "_send", hook_transport_send)
 
     # Standard WebRTC Signaling Handshake (Local O/A)
     offer = await pc_a.createOffer()
@@ -70,6 +83,26 @@ async def run_capture():
 
     print("[*] Handshake initiated with ECDHE-ECDSA-AES128-GCM-SHA256...")
 
+    # Ensure we capture at least one RTP packet in both plain and encrypted forms.
+    for _ in range(50):
+        if dtls_a.state == "connected":
+            break
+        await asyncio.sleep(0.1)
+
+    if dtls_a.state != "connected":
+        raise RuntimeError("DTLS transport did not reach connected state")
+
+    probe_rtp = struct.pack(
+        "!BBHII",
+        0x80,       # V=2, P=0, X=0, CC=0
+        96,         # dynamic payload type
+        1,          # sequence number
+        0x10203040, # timestamp
+        0x11223344, # SSRC
+    ) + b"mini-webrtc-rs-srtp-probe"
+    await dtls_a._send_rtp(probe_rtp)
+    print("[*] Injected one RTP probe packet for fixture generation")
+
     # Let the stream run for 2 seconds to gather a clean burst of media packets
     await asyncio.sleep(2.0)
 
@@ -78,25 +111,49 @@ async def run_capture():
     if dtls_a._ssl is None:
         raise RuntimeError("DTLS SSL connection not ready; cannot export keying material")
 
+    selected_profile = dtls_a._ssl.get_selected_srtp_profile()
+    print(f"[*] Negotiated SRTP profile: {selected_profile.decode()}")
+    if selected_profile != SRTP_AEAD_AES_128_GCM.openssl_profile:
+        raise RuntimeError(
+            f"unexpected SRTP profile {selected_profile!r}; expected {SRTP_AEAD_AES_128_GCM.openssl_profile!r}"
+        )
+
+    key_material_len = 2 * (
+        SRTP_AEAD_AES_128_GCM.key_length + SRTP_AEAD_AES_128_GCM.salt_length
+    )
     srtp_key_material = dtls_a._ssl.export_keying_material(
-        b"EXTRACTOR-dtls_srtp", 60, None  # Length dictated by profile
+        b"EXTRACTOR-dtls_srtp", key_material_len, None
     )
 
     print(f"[*] Exported SRTP Key Material (Hex): {srtp_key_material.hex()}")
     with open("srtp_test_keys.txt", "w") as f:
         f.write(srtp_key_material.hex())
 
-    # Save to PCAP
-    # Construct minimalist Mock UDP scapy structures to store our binary raw payloads
+    # Save to PCAP as synthetic loopback UDP packets.
     from scapy.layers.inet import IP, UDP
-    scapy_packets = []
-    for i, payload in enumerate(captured_packets):
-        # Wrap raw bytes into a synthetic loopback UDP packet structure
-        pkt = IP(src="127.0.0.1", dst="127.0.0.1")/UDP(sport=5004, dport=5004)/payload
-        scapy_packets.append(pkt)
 
-    wrpcap("captured_srtp_gcm128.pcap", scapy_packets)
-    print(f"[*] Successfully saved {len(scapy_packets)} SRTP packets to captured_srtp_gcm128.pcap")
+    plain_scapy_packets = []
+    encrypted_scapy_packets = []
+
+    for payload in plain_packets:
+        pkt = IP(src="127.0.0.1", dst="127.0.0.1")/UDP(sport=5004, dport=5004)/payload
+        plain_scapy_packets.append(pkt)
+
+    for payload in encrypted_packets:
+        pkt = IP(src="127.0.0.1", dst="127.0.0.1")/UDP(sport=5004, dport=5004)/payload
+        encrypted_scapy_packets.append(pkt)
+
+    wrpcap("captured_srtp_gcm128_plain.pcap", plain_scapy_packets)
+    wrpcap("captured_srtp_gcm128_encrypted.pcap", encrypted_scapy_packets)
+
+    # Keep legacy file name for compatibility, now pointing to encrypted packets.
+    wrpcap("captured_srtp_gcm128.pcap", encrypted_scapy_packets)
+
+    print(
+        "[*] Successfully saved "
+        f"{len(plain_scapy_packets)} plain packets to captured_srtp_gcm128_plain.pcap and "
+        f"{len(encrypted_scapy_packets)} encrypted packets to captured_srtp_gcm128_encrypted.pcap"
+    )
 
     await pc_a.close()
     await pc_b.close()

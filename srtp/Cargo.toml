@@ -11,3 +11,7 @@ mini-webrtc-derive = { workspace = true }
 aes = {workspace = true}
 aes-gcm = {workspace = true}
 anyhow = {workspace = true}
+
+[dev-dependencies]
+etherparse = "0.16"
+pcap-file = "2.0"

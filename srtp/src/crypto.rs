@@ -3,7 +3,6 @@ use aes::cipher::BlockCipherEncrypt;
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes128Gcm, Key, KeyInit, Nonce};
 use anyhow::{Result, anyhow};
-use common::decode_hex;
 
 use crate::header::RtpHeader;
 use crate::packet::RtpPacket;
@@ -141,6 +140,104 @@ fn aes_cm_key_derivation(
 #[cfg(test)]
 mod aes_cm_key_derivation_tests {
     use super::*;
+    use crate::is_rtp_packet;
+    use common::buffer::BufReader;
+    use common::decode_hex;
+    use etherparse::{PacketHeaders, TransportHeader};
+    use pcap_file::DataLink;
+    use pcap_file::pcap::PcapReader;
+    use std::io::Cursor;
+
+    const SRTP_MASTER_KEY_LEN: usize = 16;
+    const LAB_PLAIN_CAPTURE_PCAP: &[u8] =
+        include_bytes!("../../lab/captured_srtp_gcm128_plain.pcap");
+    const LAB_ENCRYPTED_CAPTURE_PCAP: &[u8] =
+        include_bytes!("../../lab/captured_srtp_gcm128_encrypted.pcap");
+    const LAB_SRTP_EXPORTER_HEX: &str = include_str!("../../lab/srtp_test_keys.txt");
+
+    fn parse_udp_payloads_from_raw_ipv4_pcap(pcap: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let mut reader = PcapReader::new(Cursor::new(pcap))
+            .map_err(|err| anyhow!("failed to parse pcap header; {err}"))?;
+        if reader.header().datalink != DataLink::RAW && reader.header().datalink != DataLink::IPV4 {
+            anyhow::bail!(
+                "expected DLT_RAW(228) or DLT_IPV4(228), found {:?}",
+                reader.header().datalink
+            )
+        }
+
+        let mut payloads = vec![];
+        while let Some(packet) = reader.next_packet() {
+            let packet = packet.map_err(|err| anyhow!("failed to read pcap packet; {err}"))?;
+            let headers = match PacketHeaders::from_ip_slice(&packet.data) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+
+            if headers.net.is_none() {
+                continue;
+            }
+
+            let Some(TransportHeader::Udp(_)) = headers.transport else {
+                continue;
+            };
+
+            payloads.push(headers.payload.slice().to_vec());
+        }
+
+        Ok(payloads)
+    }
+
+    fn split_lab_exporter_material() -> Result<SrtpEncryptionKeys> {
+        let keying_material = decode_hex(LAB_SRTP_EXPORTER_HEX.trim())?;
+        if keying_material.len() % 2 != 0 {
+            anyhow::bail!("keying material length must be even")
+        }
+
+        let per_side_len = keying_material.len() / 2;
+        if per_side_len <= SRTP_MASTER_KEY_LEN {
+            anyhow::bail!("keying material per side too small: {per_side_len}")
+        }
+
+        let salt_len = per_side_len - SRTP_MASTER_KEY_LEN;
+        let client_master_key = keying_material[0..SRTP_MASTER_KEY_LEN].to_vec();
+        let server_master_key =
+            keying_material[SRTP_MASTER_KEY_LEN..2 * SRTP_MASTER_KEY_LEN].to_vec();
+        let salts_start = 2 * SRTP_MASTER_KEY_LEN;
+        let client_master_salt = keying_material[salts_start..salts_start + salt_len].to_vec();
+        let server_master_salt =
+            keying_material[salts_start + salt_len..salts_start + 2 * salt_len].to_vec();
+
+        Ok(SrtpEncryptionKeys {
+            server_master_key,
+            server_master_salt,
+            client_master_key,
+            client_master_salt,
+        })
+    }
+
+    fn first_rtp_payload_from_pcap(pcap: &[u8]) -> Result<Vec<u8>> {
+        let payloads = parse_udp_payloads_from_raw_ipv4_pcap(pcap)?;
+        payloads
+            .into_iter()
+            .find(|p| p.len() >= 12 && is_rtp_packet(p))
+            .ok_or_else(|| anyhow!("pcap contains no RTP packets"))
+    }
+
+    fn decode_rtp_packet(raw_payload: &[u8]) -> Result<RtpPacket> {
+        let mut reader = BufReader::new(raw_payload);
+        RtpPacket::decode(&mut reader)
+    }
+
+    fn decrypt_with_direction(
+        encrypted_raw_payload: &[u8],
+        master_key: &[u8],
+        master_salt: &[u8],
+        roc: u32,
+    ) -> Result<RtpPacket> {
+        let encrypted_packet = decode_rtp_packet(encrypted_raw_payload)?;
+        let gcm = SrtpGcm::new(master_key, master_salt);
+        gcm.decrypt(encrypted_packet, roc)
+    }
 
     #[test]
     fn test_cipher_key() -> Result<()> {
@@ -169,6 +266,65 @@ mod aes_cm_key_derivation_tests {
             &master_salt,
         );
         assert_eq!(cipher_key, expected_salt);
+        Ok(())
+    }
+
+    #[test]
+    fn test_srtp_gcm_decrypt_with_lab_capture() -> Result<()> {
+        let keys = split_lab_exporter_material()?;
+        let plain_raw = first_rtp_payload_from_pcap(LAB_PLAIN_CAPTURE_PCAP)?;
+        let encrypted_raw = first_rtp_payload_from_pcap(LAB_ENCRYPTED_CAPTURE_PCAP)?;
+        let plain_packet = decode_rtp_packet(&plain_raw)?;
+
+        let decrypted_packet = decrypt_with_direction(
+            &encrypted_raw,
+            &keys.client_master_key,
+            &keys.client_master_salt,
+            0,
+        )
+        .or_else(|_| {
+            decrypt_with_direction(
+                &encrypted_raw,
+                &keys.server_master_key,
+                &keys.server_master_salt,
+                0,
+            )
+        })?;
+
+        assert_eq!(
+            decrypted_packet.header.sequence_number,
+            plain_packet.header.sequence_number
+        );
+        assert_eq!(
+            decrypted_packet.header.timestamp,
+            plain_packet.header.timestamp
+        );
+        assert_eq!(decrypted_packet.header.ssrc, plain_packet.header.ssrc);
+        assert_eq!(decrypted_packet.payload, plain_packet.payload);
+        Ok(())
+    }
+
+    #[test]
+    fn test_srtp_gcm_decrypt_fails_with_wrong_roc() -> Result<()> {
+        let keys = split_lab_exporter_material()?;
+        let encrypted_raw = first_rtp_payload_from_pcap(LAB_ENCRYPTED_CAPTURE_PCAP)?;
+
+        let client_err = decrypt_with_direction(
+            &encrypted_raw,
+            &keys.client_master_key,
+            &keys.client_master_salt,
+            1,
+        )
+        .is_err();
+        let server_err = decrypt_with_direction(
+            &encrypted_raw,
+            &keys.server_master_key,
+            &keys.server_master_salt,
+            1,
+        )
+        .is_err();
+
+        assert!(client_err && server_err);
         Ok(())
     }
 }
