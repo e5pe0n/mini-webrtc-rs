@@ -1,4 +1,4 @@
-use dtls::Fingerprint;
+use crate::dtls::Fingerprint;
 use rand::RngExt;
 use std::net::IpAddr;
 

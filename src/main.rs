@@ -1,20 +1,15 @@
-mod ice;
-mod sdp;
-mod signaling_server;
-mod stun;
-mod udp_server;
-
 use anyhow::Result;
 use local_ip_address::local_ip;
+use mini_webrtc_rs::dtls::Fingerprint;
 use rcgen::generate_simple_self_signed;
 use tracing::info;
 
-use crate::{
+use mini_webrtc_rs::{
     ice::{IceAgent, IceCandidate},
+    signaling_server::SignalingServer,
     stun::StunClient,
+    udp_server::UdpServer,
 };
-use crate::{signaling_server::SignalingServer, udp_server::UdpServer};
-use dtls::Fingerprint;
 
 const UDP_SERVER_PORT: u64 = 4433;
 const STUN_SERVER_ADDRESS: &'static str = "stun.l.google.com:19302";
@@ -50,6 +45,7 @@ async fn main() -> Result<()> {
     let mut udp_server = UdpServer::new(
         &format!("127.0.0.1:{UDP_SERVER_PORT}"),
         certified_key,
+        fingerprint,
         ice_agent.clone(),
     )
     .await?;

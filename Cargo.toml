@@ -3,53 +3,28 @@ name = "mini-webrtc-rs"
 version = "0.1.0"
 edition = "2024"
 
-[workspace]
-resolver = "3"
-members = [ "common","dtls", "srtp"]
-
-[workspace.dependencies]
+[dependencies]
 mini-webrtc-derive = { path = "mini-webrtc-derive" }
-common = { path = "common" }
-dtls = { path = "dtls" }
-srtp = { path = "srtp" }
 
 aes = "0.9.0"
 aes-gcm = "0.10.3"
 anyhow = "1.0.102"
 axum = "0.8.8"
-tracing = "0.1.44"
-rand = { version= "0.10.1", features = ["thread_rng"] }
-sha2 = "0.11.0"
+crc = "3.4.0"
 hmac = "0.13.0"
-x25519-dalek = { version = "2.0.1", features = ["getrandom"] }
-rcgen = "0.14.7"
 local-ip-address = "0.6.10"
 p256 = "0.13.2"
-tokio = { version = "1.49.0", features = ["full"] }
-thiserror = "2.0.18"
-tracing-subscriber = "0.3.23"
-crc = "3.4.0"
+rand = { version= "0.10.1", features = ["thread_rng"] }
+rcgen = "0.14.7"
 serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "0.11.0"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+x25519-dalek = { version = "2.0.1", features = ["getrandom"] }
 x509-parser = "0.18.1"
 
-[dependencies]
-mini-webrtc-derive = { workspace = true }
-common = { workspace = true }
-dtls = { workspace = true }
-srtp = { workspace = true }
-
-anyhow = { workspace = true }
-axum = {workspace = true}
-local-ip-address = {workspace = true}
-p256 = {workspace = true}
-rcgen = {workspace = true}
-rand = { workspace = true }
-serde = { workspace = true }
-sha2 = { workspace = true }
-thiserror = {workspace = true}
-tokio = {workspace = true}
-tracing = { workspace = true }
-tracing-subscriber = {workspace = true}
-crc = {workspace = true}
-x25519-dalek = { workspace = true }
-x509-parser = {workspace = true}
+[dev-dependencies]
+etherparse = "0.16"
+pcap-file = "2.0"
