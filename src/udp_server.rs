@@ -1,10 +1,8 @@
 use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::manager::DtlsManager;
-use crate::dtls::{DtlsMessage, DtlsState, Fingerprint, is_dtls_packet};
+use crate::dtls::{DtlsState, Fingerprint, is_dtls_packet};
 use crate::ice::IceAgent;
-use crate::srtp::header::PayloadType;
-use crate::srtp::packet::{RtpPacket, SrtpPacketIndex};
-use crate::srtp::{SrtpSsrcState, is_rtp_packet};
+use crate::srtp::{SrtpManager, is_rtp_packet};
 use crate::stun::{
     AttributeType, MAGIC_COOKIE, StunMessage, StunMessageBuilder, StunMessageClass,
     StunMessageMethod, StunMessageType,
@@ -20,6 +18,7 @@ pub struct UdpServer {
     ice_agent: IceAgent,
     socket: Arc<UdpSocket>,
     dtls_manager: DtlsManager,
+    srtp_manager: Option<SrtpManager>,
 }
 
 impl UdpServer {
@@ -39,6 +38,7 @@ impl UdpServer {
             ice_agent,
             socket,
             dtls_manager,
+            srtp_manager: None,
         })
     }
 
@@ -68,7 +68,10 @@ impl UdpServer {
             self.dtls_manager
                 .handle_dtls_packet(data, peer_addr)
                 .await?;
-            if matches!(self.dtls_manager.state, DtlsState::Connected) {}
+            if matches!(self.dtls_manager.state, DtlsState::Connected) {
+                let srtp_encryption_keys = self.dtls_manager.export_keying_material()?;
+                self.srtp_manager = Some(SrtpManager::new(srtp_encryption_keys));
+            }
         }
 
         if is_rtp_packet(data) {
@@ -80,20 +83,10 @@ impl UdpServer {
     }
 
     async fn handle_rtp_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
-        let _ = data;
-        let _ = peer_addr;
-        warn!("received RTP packet, but SRTP decrypt path is not wired in UdpServer yet");
-        Ok(())
-    }
-
-    async fn handle_decrypted_rtp_packet(
-        &mut self,
-        packet: RtpPacket,
-        peer_addr: SocketAddr,
-    ) -> Result<()> {
-        match packet.header.payload_type {
-            PayloadType::VP8 => {}
-            _ => warn!("unsupported payload type: {:?}", packet.header.payload_type),
+        if let Some(srtp_manager) = self.srtp_manager.as_mut() {
+            srtp_manager.handle_rtp_packet(data, peer_addr)?;
+        } else {
+            warn!("received RTP packet before SRTP is ready; peer={peer_addr}");
         }
         Ok(())
     }

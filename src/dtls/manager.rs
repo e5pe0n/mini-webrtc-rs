@@ -1,13 +1,13 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
-use anyhow::{Context, Result, anyhow};
 use crate::common::buffer::{BufReader, BufWriter};
+use crate::srtp::crypto::{SrtpEncryptionKeys, generate_keying_material};
+use anyhow::{Context, Result, anyhow};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
 use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use rcgen::{CertifiedKey, KeyPair};
 use sha2::{Digest, Sha256};
-use crate::srtp::crypto::SrtpEncryptionKeys;
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -686,7 +686,39 @@ impl DtlsManager {
         .concat())
     }
 
-    pub fn export_keying_material() -> Result<SrtpEncryptionKeys> {
-        todo!("export_keying_material is not implemented yet")
+    pub fn export_keying_material(&self) -> Result<SrtpEncryptionKeys> {
+        // // export key material
+        let profile = match *&self
+            .srtp_protection_profile
+            .ok_or(anyhow!("srtp protection profile is none."))?
+        {
+            SrtpProtectionProfile::SrtpAeadAes128Gcm(profile) => Ok(profile),
+            _ => Err(anyhow!("unsupported srtp protection profile.")),
+        }?;
+        let keying_material = generate_keying_material(
+            &self
+                .master_secret
+                .clone()
+                .ok_or(anyhow!("master secret is none."))?,
+            &self
+                .client_random
+                .ok_or(anyhow!("client random is none."))?
+                .to_bytes(),
+            &self
+                .server_random
+                .ok_or(anyhow!("server random is none."))?
+                .to_bytes(),
+            profile.key_length * 2 + profile.salt_length * 2,
+        );
+        // init srtp cipher suite
+        let encryption_keys = SrtpEncryptionKeys {
+            client_master_key: keying_material[..profile.key_length].to_vec(),
+            client_master_salt: keying_material[profile.key_length..profile.key_length * 2]
+                .to_vec(),
+            server_master_key: keying_material[profile.key_length * 2..].to_vec(),
+            server_master_salt: keying_material[profile.key_length * 2 + profile.salt_length..]
+                .to_vec(),
+        };
+        Ok(encryption_keys)
     }
 }
