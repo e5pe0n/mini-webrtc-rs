@@ -129,6 +129,10 @@ impl BufWriter {
         self.buf[pos] = value;
     }
 
+    pub fn write_bytes_at(&mut self, bytes: &[u8], pos: usize) {
+        self.buf[pos..pos + bytes.len()].copy_from_slice(bytes);
+    }
+
     pub fn write_u16(&mut self, value: u16) {
         self.buf.push((value >> 8) as u8);
         self.buf.push(value as u8);

@@ -4,7 +4,7 @@ use crate::dtls::{DtlsState, Fingerprint, is_dtls_packet};
 use crate::ice::IceAgent;
 use crate::srtp::{SrtpManager, is_rtp_packet};
 use crate::stun::{
-    AttributeType, MAGIC_COOKIE, StunMessage, StunMessageBuilder, StunMessageClass,
+    AttributeType, IpFamily, MAGIC_COOKIE, StunMessage, StunMessageBuilder, StunMessageClass,
     StunMessageMethod, StunMessageType,
 };
 use anyhow::{Result, anyhow};
@@ -20,6 +20,8 @@ pub struct UdpServer {
     socket: Arc<UdpSocket>,
     dtls_manager: DtlsManager,
     srtp_manager: Option<SrtpManager>,
+    logged_first_dtls_packet: bool,
+    logged_first_stun_response: bool,
 }
 
 impl UdpServer {
@@ -40,6 +42,8 @@ impl UdpServer {
             socket,
             dtls_manager,
             srtp_manager: None,
+            logged_first_dtls_packet: false,
+            logged_first_stun_response: false,
         })
     }
 
@@ -66,6 +70,10 @@ impl UdpServer {
         }
 
         if is_dtls_packet(data) {
+            if !self.logged_first_dtls_packet {
+                info!("received first dtls packet from {peer_addr}");
+                self.logged_first_dtls_packet = true;
+            }
             self.dtls_manager
                 .handle_dtls_packet(data, peer_addr)
                 .await?;
@@ -114,33 +122,31 @@ impl UdpServer {
                 ice_agent.remote_peer.as_ref().map(|p| p.ufrag.clone()),
             )
         };
-        let Some(remote_ufrag) = remote_ufrag else {
-            warn!("received STUN before remote peer is configured; ignore the message.");
-            return Ok(());
-        };
         // https://datatracker.ietf.org/doc/html/rfc8445#section-7.2.2
         // - verify username in the message
         let username = unsafe { String::from_utf8_unchecked(username_attr.value.clone()) };
-        let expected_username = local_ufrag + ":" + &remote_ufrag;
-        if username != expected_username {
-            warn!(
-                "username attribute mismatch: expected={expected_username}, actual={username}; ignore the message."
-            );
+
+        if let Some(remote_ufrag) = remote_ufrag {
+            let expected_username = format!("{local_ufrag}:{remote_ufrag}");
+            if username != expected_username {
+                warn!(
+                    "username attribute mismatch: actual={username}, expected={expected_username}; ignore the message."
+                );
+                return Ok(()); // ignore message
+            }
+        } else {
+            warn!("remote ufrag not configured; ignore the message.");
             return Ok(()); // ignore message
         }
+
         // - verify message integrity
-        if !message.verify_message_integrity(local_pwd.clone())? {
-            warn!("message integrity mismatch; ignore the message.");
-            return Ok(()); // ignore message
-        }
+        message.verify_message_integrity(local_pwd.clone())?;
 
         // - send stun binding response
         let xor_mapped_address = {
             let mut value_buf = BufWriter::new();
             value_buf.write_u8(0);
-            value_buf.write_u8(
-                0x0a, // ip v4
-            );
+            value_buf.write_u8(IpFamily::V4 as u8);
             let x_port = peer_addr.port() ^ ((MAGIC_COOKIE >> 16) as u16);
             value_buf.write_u16(x_port);
             let ip_addr_bytes = match peer_addr.ip() {
@@ -167,6 +173,10 @@ impl UdpServer {
         self.socket
             .send_to(&response_message.raw, peer_addr)
             .await?;
+        if !self.logged_first_stun_response {
+            info!("sent first stun binding success response to {peer_addr}");
+            self.logged_first_stun_response = true;
+        }
         Ok(())
     }
 }

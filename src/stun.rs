@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use crc::{CRC_32_ISO_HDLC, Crc};
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use rand::Rng;
+use sha1::Sha1;
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -10,9 +12,16 @@ use tokio::time::{Duration, timeout};
 use tracing::info;
 
 use crate::common::buffer::{BufReader, BufWriter};
-use crate::dtls::crypto::hmac_sha;
 use crate::ice::{generate_ice_pwd, generate_ice_ufrag};
 use mini_webrtc_derive::{FromPrimitive, TryFromPrimitive};
+
+type HmacSha1 = Hmac<Sha1>;
+
+fn hmac_sha1(key: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut mac = <HmacSha1>::new_from_slice(key).expect("invalid HMAC-SHA1 key");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
 
 pub const HEADER_BYTES: usize = 20;
 
@@ -67,13 +76,36 @@ impl StunMessage {
             .get(&AttributeType::MessageIntegrity)
             .ok_or(anyhow!("message integrity attribute does not exist."))?;
 
-        let mut raw_message = self.raw[0..message_integrity.offset_in_message].to_vec();
-        let message_length =
-            raw_message.len() - HEADER_BYTES + ATTRIBUTE_HEADER_BYTES + HMAC_SIGNATURE_BYTES;
+        if message_integrity.value.len() != HMAC_SIGNATURE_BYTES {
+            return Ok(false);
+        }
+
+        let mi_offset = message_integrity.offset_in_message;
+        if message_integrity.offset_in_message < HEADER_BYTES {
+            return Err(anyhow!(
+                "invalid message integrity offset; offset={}",
+                message_integrity.offset_in_message
+            ));
+        }
+
+        let mi_end =
+            message_integrity.offset_in_message + ATTRIBUTE_HEADER_BYTES + HMAC_SIGNATURE_BYTES;
+        if mi_end > self.raw.len() {
+            return Err(anyhow!(
+                "invalid message integrity offset; offset={}, packet_len={}",
+                message_integrity.offset_in_message,
+                self.raw.len()
+            ));
+        }
+
+        // RFC 5389 canonical: HMAC input is bytes before MESSAGE-INTEGRITY attribute,
+        // while header length includes MESSAGE-INTEGRITY itself.
+        let mut raw_message = self.raw[0..mi_offset].to_vec();
+        let message_length = mi_end - HEADER_BYTES;
         raw_message[2] = (message_length >> 8) as u8;
         raw_message[3] = message_length as u8;
 
-        let calculated_message_integrity = hmac_sha(pwd.as_bytes(), &raw_message);
+        let calculated_message_integrity = hmac_sha1(pwd.as_bytes(), &raw_message);
         Ok(calculated_message_integrity == message_integrity.value)
     }
 
@@ -261,7 +293,15 @@ impl StunMessageBuilder {
         self.writer.write_u16(attr_type as u16);
         self.writer.write_u16(value.len() as u16);
         self.writer.write_bytes(&value);
-        self.write_message_length(self.len());
+
+        // STUN attributes are padded to 32-bit boundaries; padding is not
+        // included in the attribute length field but is included in message length.
+        let padding = (4 - (value.len() % 4)) % 4;
+        if padding > 0 {
+            self.writer.write_bytes(&vec![0u8; padding]);
+        }
+
+        self.write_message_length(self.len() - HEADER_BYTES);
         self
     }
 
@@ -279,15 +319,36 @@ impl StunMessageBuilder {
     }
 
     pub fn build(mut self, pwd: String) -> StunMessage {
-        let message_length =
-            self.len() - HEADER_BYTES + ATTRIBUTE_HEADER_BYTES + HMAC_SIGNATURE_BYTES;
-        self.write_message_length(message_length);
-
-        let data = self.writer.buf();
-
         self = self.add_attr(
             AttributeType::MessageIntegrity,
-            &hmac_sha(&pwd.as_bytes(), &data[..]),
+            &vec![0u8; HMAC_SIGNATURE_BYTES],
+        );
+
+        let mi_offset = self
+            .attributes
+            .get(&AttributeType::MessageIntegrity)
+            .map(|attribute| attribute.offset_in_message)
+            .expect("temporary MESSAGE-INTEGRITY attribute should exist");
+
+        // RFC 5389 canonical: HMAC input excludes MESSAGE-INTEGRITY attribute,
+        // but length includes it.
+        let message_length =
+            mi_offset - HEADER_BYTES + ATTRIBUTE_HEADER_BYTES + HMAC_SIGNATURE_BYTES;
+        self.write_message_length(message_length);
+
+        let mut data = self.writer.buf();
+        data.truncate(mi_offset);
+        let message_integrity = hmac_sha1(pwd.as_bytes(), &data[..]);
+        let mi_value_start = mi_offset + ATTRIBUTE_HEADER_BYTES;
+        self.writer
+            .write_bytes_at(&message_integrity, mi_value_start);
+        self.attributes.insert(
+            AttributeType::MessageIntegrity,
+            Attribute {
+                attribute_type: AttributeType::MessageIntegrity,
+                value: message_integrity.clone(),
+                offset_in_message: mi_offset,
+            },
         );
 
         let message_length = self.len() - HEADER_BYTES + ATTRIBUTE_HEADER_BYTES + FINGERPRINT_BYTES;
@@ -298,6 +359,7 @@ impl StunMessageBuilder {
             AttributeType::Fingerprint,
             &(checksum ^ FINGERPRINT_XOR_MASK).to_be_bytes(),
         );
+        self.write_message_length(self.len() - HEADER_BYTES);
 
         StunMessage {
             message_type: self.message_type,
@@ -316,7 +378,7 @@ pub struct StunClient {
 
 #[derive(TryFromPrimitive)]
 #[try_from(type = "u8")]
-enum IpFamily {
+pub enum IpFamily {
     V4 = 0x01,
     V6 = 0x02,
 }
