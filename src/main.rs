@@ -1,7 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use local_ip_address::local_ip;
 use mini_webrtc_rs::dtls::Fingerprint;
 use rcgen::generate_simple_self_signed;
+use std::net::ToSocketAddrs;
 use tracing::info;
 
 use mini_webrtc_rs::{
@@ -25,7 +26,14 @@ async fn main() -> Result<()> {
     let local_ip = local_ip().unwrap();
     info!("local_ip={local_ip:?}");
 
-    let stun_client = StunClient::new(STUN_SERVER_ADDRESS.parse()?);
+    let mut stun_addrs = STUN_SERVER_ADDRESS
+        .to_socket_addrs()
+        .context("resolve STUN server address")?;
+    let stun_addr = stun_addrs
+        .find(|addr| addr.is_ipv4())
+        .or_else(|| stun_addrs.next())
+        .ok_or(anyhow!("resolved STUN server address list is empty"))?;
+    let stun_client = StunClient::new(stun_addr);
     let mapped_address = stun_client.binding_request().await?;
     info!("mapped_address={mapped_address:?}");
 
@@ -48,7 +56,8 @@ async fn main() -> Result<()> {
         fingerprint,
         ice_agent.clone(),
     )
-    .await?;
+    .await
+    .context("init udp server")?;
     let signaling_server = SignalingServer::new(ice_agent).await;
 
     // Run both servers concurrently

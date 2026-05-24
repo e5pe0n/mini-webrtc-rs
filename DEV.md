@@ -1,3 +1,9 @@
+run udp server
+
+```sh
+watchexec -r -e rs,toml -- cargo run
+```
+
 run local dtls server
 
 ```sh
