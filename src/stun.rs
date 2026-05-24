@@ -6,6 +6,8 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 use tokio::net::UdpSocket;
+use tokio::time::{Duration, timeout};
+use tracing::info;
 
 use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::crypto::hmac_sha;
@@ -218,6 +220,15 @@ impl StunMessageBuilder {
         self.writer.buf_ref().len()
     }
 
+    pub fn build_without_integrity(self) -> StunMessage {
+        StunMessage {
+            message_type: self.message_type,
+            transaction_id: self.transaction_id,
+            attributes: self.attributes,
+            raw: self.writer.buf(),
+        }
+    }
+
     pub fn build(mut self, pwd: String) -> StunMessage {
         let message_length =
             self.len() - HEADER_BYTES + ATTRIBUTE_HEADER_BYTES + HMAC_SIGNATURE_BYTES;
@@ -279,14 +290,19 @@ impl StunClient {
             },
             transaction_id.clone(),
         )
-        .build(self.pwd.clone());
+        .build_without_integrity();
 
         let socket = UdpSocket::bind("0.0.0.0:0".parse::<SocketAddr>()?).await?;
         const MAX_DATAGRAM_SIZE: usize = 65_507;
         socket.connect(&self.to).await?;
+        info!("stun client: socket connected");
         socket.send(&request.raw).await?;
+        info!("stun client: sent a binding request.");
         let mut data = vec![0u8; MAX_DATAGRAM_SIZE];
-        let length = socket.recv(&mut data).await?;
+        let length = timeout(Duration::from_secs(3), socket.recv(&mut data))
+            .await
+            .map_err(|_| anyhow!("stun recv timeout after 3s; server={}", self.to))??;
+        info!("stun client: received data; length={length}");
         let data = data[..length].to_vec();
 
         let mut reader = BufReader::new(&data);

@@ -3,7 +3,7 @@ use local_ip_address::local_ip;
 use mini_webrtc_rs::dtls::Fingerprint;
 use rcgen::generate_simple_self_signed;
 use std::net::ToSocketAddrs;
-use tracing::info;
+use tracing::{info, warn};
 
 use mini_webrtc_rs::{
     ice::{IceAgent, IceCandidate},
@@ -34,19 +34,24 @@ async fn main() -> Result<()> {
         .or_else(|| stun_addrs.next())
         .ok_or(anyhow!("resolved STUN server address list is empty"))?;
     let stun_client = StunClient::new(stun_addr);
-    let mapped_address = stun_client.binding_request().await?;
-    info!("mapped_address={mapped_address:?}");
 
-    let ice_candidates = vec![
-        IceCandidate {
-            ip: local_ip,
-            port: UDP_SERVER_PORT,
-        },
-        IceCandidate {
-            ip: mapped_address.ip(),
-            port: UDP_SERVER_PORT,
-        },
-    ];
+    let mut ice_candidates = vec![IceCandidate {
+        ip: local_ip,
+        port: UDP_SERVER_PORT,
+    }];
+
+    match stun_client.binding_request().await {
+        Ok(mapped_address) => {
+            info!("mapped_address={mapped_address:?}");
+            ice_candidates.push(IceCandidate {
+                ip: mapped_address.ip(),
+                port: UDP_SERVER_PORT,
+            });
+        }
+        Err(err) => {
+            warn!("stun mapping failed; continue with host candidate only: {err}");
+        }
+    }
 
     let ice_agent = IceAgent::new(ice_candidates, fingerprint.clone());
 
