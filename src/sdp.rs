@@ -3,12 +3,14 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SdpMessage {
     pub session_id: String,
     pub medias: Vec<SdpMedia>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SdpMedia {
     pub media_id: String,
     pub media_type: MediaType,
@@ -22,17 +24,21 @@ pub struct SdpMedia {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MediaType {
     Video,
     Audio,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FingerprintType {
+    #[serde(rename = "sha-256")]
     Sha256,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SdpMediaCandidate {
     pub ip: IpAddr,
     pub port: u64,
@@ -41,11 +47,13 @@ pub struct SdpMediaCandidate {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CandidateType {
     Host,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TransportType {
     Udp,
     Tcp,

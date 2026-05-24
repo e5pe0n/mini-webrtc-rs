@@ -22,6 +22,15 @@ pub use manager::SrtpManager;
 
 // https://datatracker.ietf.org/doc/html/rfc3550#section-5.1
 pub fn is_rtp_packet(data: &[u8]) -> bool {
+    if data.len() < 12 {
+        return false;
+    }
+
+    let version = (data[0] & 0b1100_0000) >> 6;
+    if version != 2 {
+        return false;
+    }
+
     let payload_type = data[1] & 0b01111111;
     payload_type <= 35 || (payload_type >= 96 && payload_type <= 127)
 }

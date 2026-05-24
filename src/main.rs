@@ -3,6 +3,8 @@ use local_ip_address::local_ip;
 use mini_webrtc_rs::dtls::Fingerprint;
 use rcgen::generate_simple_self_signed;
 use std::net::ToSocketAddrs;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use mini_webrtc_rs::{
@@ -53,10 +55,13 @@ async fn main() -> Result<()> {
         }
     }
 
-    let ice_agent = IceAgent::new(ice_candidates, fingerprint.clone());
+    let ice_agent = Arc::new(Mutex::new(IceAgent::new(
+        ice_candidates,
+        fingerprint.clone(),
+    )));
 
     let mut udp_server = UdpServer::new(
-        &format!("127.0.0.1:{UDP_SERVER_PORT}"),
+        &format!("0.0.0.0:{UDP_SERVER_PORT}"),
         certified_key,
         fingerprint,
         ice_agent.clone(),

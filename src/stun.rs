@@ -48,8 +48,17 @@ pub struct StunMessage {
 
 impl StunMessage {
     pub fn is_stun_message(buf: &[u8]) -> bool {
-        buf.len() >= HEADER_BYTES
-            && u32::from_be_bytes(buf[0..MAGIC_COOKIE_BYTES].try_into().unwrap()) == MAGIC_COOKIE
+        if buf.len() < HEADER_BYTES {
+            return false;
+        }
+
+        // RFC 5389: first two bits are zero and magic cookie is at bytes 4..8.
+        if (buf[0] & 0b1100_0000) != 0 {
+            return false;
+        }
+
+        let cookie = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        cookie == MAGIC_COOKIE
     }
 
     pub fn verify_message_integrity(&self, pwd: String) -> Result<bool> {
@@ -89,17 +98,58 @@ impl StunMessage {
         let message_length = reader.read_u16()? as usize;
         let _magic_cookie = reader.read_u32()?;
 
+        if HEADER_BYTES + message_length > reader.buf.len() {
+            return Err(anyhow!(
+                "invalid stun message length; message_length={}, packet_len={}",
+                message_length,
+                reader.buf.len()
+            ));
+        }
+
         let mut transaction_id = vec![0u8; TRANSACTION_ID_BYTES];
-        reader.read_exact(&mut transaction_id);
+        reader.read_exact(&mut transaction_id)?;
 
         let mut attributes: HashMap<AttributeType, Attribute> = HashMap::new();
 
-        loop {
-            let offset = (message_length as usize) - reader.rest_len();
+        let mut remaining = message_length;
+        while remaining > 0 {
+            if remaining < ATTRIBUTE_HEADER_BYTES {
+                return Err(anyhow!(
+                    "invalid stun attribute section length; remaining={remaining}"
+                ));
+            }
+
+            let offset = reader.pos;
             let attr_type = AttributeType::from(reader.read_u16()?);
-            let attr_length = reader.read_u16()?;
+            let attr_length = reader.read_u16()? as usize;
+            remaining -= ATTRIBUTE_HEADER_BYTES;
+
+            if attr_length > remaining {
+                return Err(anyhow!(
+                    "invalid stun attribute length; attr_length={}, remaining={}",
+                    attr_length,
+                    remaining
+                ));
+            }
+
             let mut attr_value = vec![0u8; attr_length as usize];
-            reader.read_exact(&mut attr_value);
+            reader.read_exact(&mut attr_value)?;
+            remaining -= attr_length;
+
+            let padding = (4 - (attr_length % 4)) % 4;
+            if padding > remaining {
+                return Err(anyhow!(
+                    "invalid stun attribute padding; padding={}, remaining={}",
+                    padding,
+                    remaining
+                ));
+            }
+            if padding > 0 {
+                let mut padding_bytes = vec![0u8; padding];
+                reader.read_exact(&mut padding_bytes)?;
+                remaining -= padding;
+            }
+
             attributes.insert(
                 attr_type.clone(),
                 Attribute {
@@ -108,15 +158,14 @@ impl StunMessage {
                     offset_in_message: offset,
                 },
             );
-            if reader.rest_len() == 0 {
-                return Ok(StunMessage {
-                    message_type,
-                    transaction_id,
-                    attributes,
-                    raw: reader.buf[..HEADER_BYTES + message_length].to_vec(),
-                });
-            }
         }
+
+        Ok(StunMessage {
+            message_type,
+            transaction_id,
+            attributes,
+            raw: reader.buf[..HEADER_BYTES + message_length].to_vec(),
+        })
     }
 }
 

@@ -12,10 +12,11 @@ use rcgen::{CertifiedKey, KeyPair};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 pub struct UdpServer {
-    ice_agent: IceAgent,
+    ice_agent: Arc<Mutex<IceAgent>>,
     socket: Arc<UdpSocket>,
     dtls_manager: DtlsManager,
     srtp_manager: Option<SrtpManager>,
@@ -26,7 +27,7 @@ impl UdpServer {
         addr: &str,
         certified_key: CertifiedKey<KeyPair>,
         fingerprint: Fingerprint,
-        ice_agent: IceAgent,
+        ice_agent: Arc<Mutex<IceAgent>>,
     ) -> Result<Self> {
         // Bind UDP socket
         let socket = Arc::new(UdpSocket::bind(addr).await?);
@@ -68,10 +69,14 @@ impl UdpServer {
             self.dtls_manager
                 .handle_dtls_packet(data, peer_addr)
                 .await?;
-            if matches!(self.dtls_manager.state, DtlsState::Connected) {
+            if self.srtp_manager.is_none()
+                && matches!(self.dtls_manager.state, DtlsState::Connected)
+            {
                 let srtp_encryption_keys = self.dtls_manager.export_keying_material()?;
                 self.srtp_manager = Some(SrtpManager::new(srtp_encryption_keys));
+                info!("srtp manager initialized after dtls connected");
             }
+            return Ok(());
         }
 
         if is_rtp_packet(data) {
@@ -101,12 +106,22 @@ impl UdpServer {
             .attributes
             .get(&AttributeType::Username)
             .ok_or(anyhow!("username attribute does not exists."))?;
+        let (local_ufrag, local_pwd, remote_ufrag) = {
+            let ice_agent = self.ice_agent.lock().await;
+            (
+                ice_agent.local_peer.ufrag.clone(),
+                ice_agent.local_peer.pwd.clone(),
+                ice_agent.remote_peer.as_ref().map(|p| p.ufrag.clone()),
+            )
+        };
+        let Some(remote_ufrag) = remote_ufrag else {
+            warn!("received STUN before remote peer is configured; ignore the message.");
+            return Ok(());
+        };
         // https://datatracker.ietf.org/doc/html/rfc8445#section-7.2.2
         // - verify username in the message
         let username = unsafe { String::from_utf8_unchecked(username_attr.value.clone()) };
-        let expected_username = self.ice_agent.local_peer.ufrag.clone()
-            + ":"
-            + &self.ice_agent.remote_peer.as_ref().unwrap().ufrag.clone();
+        let expected_username = local_ufrag + ":" + &remote_ufrag;
         if username != expected_username {
             warn!(
                 "username attribute mismatch: expected={expected_username}, actual={username}; ignore the message."
@@ -114,7 +129,7 @@ impl UdpServer {
             return Ok(()); // ignore message
         }
         // - verify message integrity
-        if !message.verify_message_integrity(self.ice_agent.local_peer.pwd.clone())? {
+        if !message.verify_message_integrity(local_pwd.clone())? {
             warn!("message integrity mismatch; ignore the message.");
             return Ok(()); // ignore message
         }
@@ -148,7 +163,7 @@ impl UdpServer {
         )
         .add_attr(AttributeType::XorMappedAddress, &xor_mapped_address)
         .add_attr(AttributeType::Username, &username_attr.value[..])
-        .build(self.ice_agent.local_peer.pwd.clone());
+        .build(local_pwd);
         self.socket
             .send_to(&response_message.raw, peer_addr)
             .await?;

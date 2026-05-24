@@ -554,7 +554,8 @@ impl DtlsManager {
                     self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                         .await?;
                 }
-                // TODO: set CONNECTED to dtls state
+                self.state = DtlsState::Connected;
+                info!("dtls handshake completed; state=connected");
             }
             _ => warn!(
                 "  -> Unknown handshake type {:?} from {}",
