@@ -56,34 +56,27 @@ async function fetchSdpOffer(): Promise<SdpMessage> {
 async function sendSdpAnswer(
   answer: sdpTransform.SessionDescription,
 ): Promise<void> {
+  console.log({ answer });
   const payload: SdpMessage = {
     sessionId: String(answer.origin.sessionId),
     medias:
       answer.media?.map((m) => ({
-        mediaId: String(m.mid ?? "0"),
-        mediaType: m.type === "audio" ? "audio" : "video",
-        direction: (m.direction as MediaDirection | undefined) ?? "sendrecv",
-        ufrag: String(m.iceUfrag ?? ""),
-        pwd: String(m.icePwd ?? ""),
-        fingerprintType: "sha-256",
-        fingerprintHash: String(m.fingerprint?.hash ?? ""),
+        mediaId: String(m.mid!),
+        mediaType: m.type as MediaType,
+        direction: m.direction as MediaDirection,
+        ufrag: m.iceUfrag!,
+        pwd: m.icePwd!,
+        fingerprintType: m.fingerprint!.type as FingerprintType,
+        fingerprintHash: m.fingerprint!.hash,
         candidates:
           m.candidates?.map((c) => ({
-            ip: String(c.ip),
-            port: Number(c.port),
-            candidateType: "host",
-            transportType:
-              String(c.transport).toLowerCase() === "tcp" ? "tcp" : "udp",
+            ip: c.ip,
+            port: c.port,
+            candidateType: "host" as CandidateType,
+            transportType: c.transport as TransportType,
           })) ?? [],
-        payloads: String(m.payloads ?? ""),
-        rtpCodec: (() => {
-          const firstRtp = m.rtp?.[0];
-          if (!firstRtp?.codec) {
-            return "";
-          }
-          const rate = firstRtp.rate ?? 90000;
-          return `${firstRtp.codec}/${rate}`;
-        })(),
+        payloads: "",
+        rtpCodec: "",
       })) ?? [],
   };
 
@@ -221,13 +214,6 @@ function App() {
               ? Number.parseInt(media.rtpCodec.split("/")[2], 10)
               : undefined,
           },
-        ],
-        rtcpFb: [
-          { payload: media.payloads, type: "nack" },
-          { payload: media.payloads, type: "nack", subtype: "pli" },
-          { payload: media.payloads, type: "ccm", subtype: "fir" },
-          { payload: media.payloads, type: "goog-remb" },
-          { payload: media.payloads, type: "transport-cc" },
         ],
         fmtp: [],
       })),
