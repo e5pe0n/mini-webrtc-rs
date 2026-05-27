@@ -742,9 +742,10 @@ impl DtlsManager {
         // init srtp cipher suite
         let encryption_keys = SrtpEncryptionKeys {
             client_master_key: keying_material[..profile.key_length].to_vec(),
-            client_master_salt: keying_material[profile.key_length..profile.key_length * 2]
+            server_master_key: keying_material[profile.key_length..profile.key_length * 2].to_vec(),
+            client_master_salt: keying_material
+                [profile.key_length * 2..profile.key_length * 2 + profile.salt_length]
                 .to_vec(),
-            server_master_key: keying_material[profile.key_length * 2..].to_vec(),
             server_master_salt: keying_material[profile.key_length * 2 + profile.salt_length..]
                 .to_vec(),
         };

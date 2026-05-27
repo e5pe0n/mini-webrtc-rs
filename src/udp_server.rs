@@ -121,7 +121,12 @@ impl UdpServer {
 
     async fn handle_rtp_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         if let Some(srtp_manager) = self.srtp_manager.as_mut() {
-            srtp_manager.handle_rtp_packet(data, peer_addr)?;
+            if let Err(err) = srtp_manager.handle_rtp_packet(data, peer_addr) {
+                warn!(
+                    "failed to handle RTP/SRTP packet; peer={peer_addr}; len={}; error={err:#}",
+                    data.len()
+                );
+            }
         } else {
             warn!("received RTP packet before SRTP is ready; peer={peer_addr}");
         }
