@@ -2,7 +2,7 @@ use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::manager::DtlsManager;
 use crate::dtls::{DtlsState, Fingerprint, is_dtls_packet};
 use crate::ice::IceAgent;
-use crate::srtp::{SrtpManager, is_rtp_packet};
+use crate::srtp::{SrtpManager, is_rtcp_packet, is_rtp_packet};
 use crate::stun::{
     AttributeType, IpFamily, MAGIC_COOKIE, StunMessage, StunMessageBuilder, StunMessageClass,
     StunMessageMethod, StunMessageType,
@@ -66,17 +66,25 @@ impl UdpServer {
         }
 
         if StunMessage::is_stun_message(data) {
+            info!("stun message received");
             return self.handle_stun_message(data, peer_addr).await;
         }
 
         if is_dtls_packet(data) {
+            info!("dtls packet received");
             if !self.logged_first_dtls_packet {
                 info!("received first dtls packet from {peer_addr}");
                 self.logged_first_dtls_packet = true;
             }
-            self.dtls_manager
-                .handle_dtls_packet(data, peer_addr)
-                .await?;
+            if let Err(err) = self.dtls_manager.handle_dtls_packet(data, peer_addr).await {
+                if matches!(self.dtls_manager.state, DtlsState::Connected) {
+                    warn!(
+                        "ignored dtls packet parse error after connected; peer={peer_addr}; error={err:#}"
+                    );
+                    return Ok(());
+                }
+                return Err(err);
+            }
             if self.srtp_manager.is_none()
                 && matches!(self.dtls_manager.state, DtlsState::Connected)
             {
@@ -88,10 +96,26 @@ impl UdpServer {
         }
 
         if is_rtp_packet(data) {
+            info!("rtp packet received");
             return self.handle_rtp_packet(data, peer_addr).await;
         }
 
-        info!("ignored unknown data.");
+        if is_rtcp_packet(data) {
+            info!(
+                "rtcp-like packet received; peer={}, len={}, pt={}",
+                peer_addr,
+                data.len(),
+                data[1]
+            );
+            return Ok(());
+        }
+
+        info!(
+            "ignored unknown data; peer={}, len={}, first_byte=0x{:02x}",
+            peer_addr,
+            data.len(),
+            data[0]
+        );
         Ok(())
     }
 

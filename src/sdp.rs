@@ -14,6 +14,7 @@ pub struct SdpMessage {
 pub struct SdpMedia {
     pub media_id: String,
     pub media_type: MediaType,
+    pub direction: MediaDirection,
     pub ufrag: String,
     pub pwd: String,
     pub fingerprint_type: FingerprintType,
@@ -28,6 +29,15 @@ pub struct SdpMedia {
 pub enum MediaType {
     Video,
     Audio,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaDirection {
+    Sendrecv,
+    Sendonly,
+    Recvonly,
+    Inactive,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

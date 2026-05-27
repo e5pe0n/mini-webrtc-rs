@@ -17,8 +17,8 @@ use crate::dtls::{
     change_cipher_sec::ChangeCipherSpec,
     cipher_suite::CipherSuiteId,
     crypto::{
-        Aes128GcmEncryptionKeys, Gcm, generate_extended_master_secret, generate_master_secret,
-        generate_verify_data,
+        Aes128GcmEncryptionKeys, Gcm, generate_client_verify_data, generate_extended_master_secret,
+        generate_master_secret, generate_server_verify_data,
     },
     extensions::{
         Extension, renegotiation_info::RenegotiationInfo,
@@ -175,12 +175,18 @@ impl DtlsManager {
                     continue;
                 }
                 ContentType::Alert => {
-                    // TODO: handle Alert
                     debug!("Received Alert from {}", peer_addr);
+                    let mut buf = vec![0u8; record_header.length as usize];
+                    reader
+                        .read_exact(&mut buf)
+                        .context("reading alert message")?;
                 }
                 ContentType::ApplicationData => {
-                    // TODO: handle ApplicationData
                     debug!("Received ApplicationData from {}", peer_addr);
+                    let mut buf = vec![0u8; record_header.length as usize];
+                    reader
+                        .read_exact(&mut buf)
+                        .context("reading application data")?;
                 }
                 ContentType::Handshake => {
                     debug!("Received Handshake from {}", peer_addr);
@@ -534,22 +540,44 @@ impl DtlsManager {
                     .map_err(|e| anyhow!("CV_VERIFY_FAIL: {e}"))?;
             }
             HandshakeType::Finished => {
-                let handshake_messages = self.concat_handshake_messages(true, true)?;
-                let handshake_messages_hash = Sha256::digest(handshake_messages);
-                let verify_data = generate_verify_data(
+                let message = Finished::decode(&mut message_reader)
+                    .context("DtlsManager::handle_handshake_message: decode Finished")?;
+
+                // Verify client's Finished first; transcript excludes Finished itself.
+                let client_finished_transcript = self.concat_handshake_messages(true, false)?;
+                let client_finished_hash = Sha256::digest(client_finished_transcript);
+                let expected_client_verify_data = generate_client_verify_data(
                     &self.master_secret.clone().unwrap(),
-                    &handshake_messages_hash,
+                    &client_finished_hash,
+                );
+                if message.verify_data != expected_client_verify_data {
+                    anyhow::bail!(
+                        "invalid client Finished verify_data; expected_len={}, actual_len={}",
+                        expected_client_verify_data.len(),
+                        message.verify_data.len()
+                    );
+                }
+
+                // Generate server Finished; transcript includes received client Finished.
+                let server_finished_transcript = self.concat_handshake_messages(true, true)?;
+                let server_finished_hash = Sha256::digest(server_finished_transcript);
+                let verify_data = generate_server_verify_data(
+                    &self.master_secret.clone().unwrap(),
+                    &server_finished_hash,
                 );
 
                 self.handshake_flight = HandshakeFlight::Flight6;
                 {
-                    // ChangeCipherSuite
+                    // Send CCS in epoch 0 as required by DTLS 1.2.
                     let message = ChangeCipherSpec {};
                     self.send_message(DtlsMessage::ChangeCipherSpec(message), peer_addr)
                         .await?;
                 }
+                // Switch write keys for the following Finished record.
+                self.epoch = self.epoch.saturating_add(1);
+                self.sequence_number = 0;
                 {
-                    // Finished response
+                    // Send Finished encrypted under the negotiated cipher state.
                     let message = Finished { verify_data };
                     self.send_message(DtlsMessage::Handshake(Box::new(message)), peer_addr)
                         .await?;

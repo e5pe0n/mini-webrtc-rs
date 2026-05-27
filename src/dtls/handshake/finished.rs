@@ -1,8 +1,17 @@
+use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::handshake::{HandshakeMessage, header::HandshakeType};
-use crate::common::buffer::BufWriter;
+use anyhow::Result;
 
 pub struct Finished {
     pub verify_data: Vec<u8>,
+}
+
+impl Finished {
+    pub fn decode(reader: &mut BufReader) -> Result<Self> {
+        let mut verify_data = vec![0u8; reader.rest_len()];
+        reader.read_exact(&mut verify_data)?;
+        Ok(Self { verify_data })
+    }
 }
 
 impl HandshakeMessage for Finished {

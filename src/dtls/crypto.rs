@@ -15,6 +15,7 @@ const PRF_EXTENDED_MASTER_SECRET_LABEL: &str = "extended master secret";
 const PRF_MASTER_SECRET_LABEL: &str = "master secret";
 const PRF_KEY_EXPANSION_LABEL: &str = "key expansion";
 const PRF_CLIENT_FINISHED_LABEL: &str = "client finished";
+const PRF_SERVER_FINISHED_LABEL: &str = "server finished";
 
 pub fn hmac_sha(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut mac = <HmacSha256>::new_from_slice(key).unwrap();
@@ -210,11 +211,29 @@ impl Gcm {
 }
 
 // https://datatracker.ietf.org/doc/html/rfc5246#autoid-49
-pub fn generate_verify_data(master_secret: &[u8], handshake_messages_hash: &[u8]) -> Vec<u8> {
+pub fn generate_client_verify_data(
+    master_secret: &[u8],
+    handshake_messages_hash: &[u8],
+) -> Vec<u8> {
     prf_p_hash(
         master_secret,
         &vec![
             PRF_CLIENT_FINISHED_LABEL.as_bytes().to_vec(),
+            handshake_messages_hash.to_vec(),
+        ]
+        .concat(),
+        12,
+    )
+}
+
+pub fn generate_server_verify_data(
+    master_secret: &[u8],
+    handshake_messages_hash: &[u8],
+) -> Vec<u8> {
+    prf_p_hash(
+        master_secret,
+        &vec![
+            PRF_SERVER_FINISHED_LABEL.as_bytes().to_vec(),
             handshake_messages_hash.to_vec(),
         ]
         .concat(),

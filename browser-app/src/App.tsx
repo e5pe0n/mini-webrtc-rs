@@ -18,6 +18,7 @@ type SdpMessage = {
 type SdpMedia = {
   mediaId: string;
   mediaType: MediaType;
+  direction: MediaDirection;
   ufrag: string;
   pwd: string;
   fingerprintType: FingerprintType;
@@ -35,6 +36,7 @@ type SdpMediaCandidate = {
 };
 
 type MediaType = "audio" | "video";
+type MediaDirection = "sendrecv" | "sendonly" | "recvonly" | "inactive";
 type CandidateType = "host";
 type TransportType = "udp" | "tcp";
 type FingerprintType = "sha-256";
@@ -60,6 +62,7 @@ async function sendSdpAnswer(
       answer.media?.map((m) => ({
         mediaId: String(m.mid ?? "0"),
         mediaType: m.type === "audio" ? "audio" : "video",
+        direction: (m.direction as MediaDirection | undefined) ?? "sendrecv",
         ufrag: String(m.iceUfrag ?? ""),
         pwd: String(m.icePwd ?? ""),
         fingerprintType: "sha-256",
@@ -135,12 +138,23 @@ async function waitForIceGatheringComplete(
 
 function App() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const statsTimerRef = useRef<number | null>(null);
   const [iceCandidates, setIceCandidates] = useState<RTCIceCandidate[]>([]);
 
   const handleStartMedia = async () => {
+    if (statsTimerRef.current !== null) {
+      window.clearInterval(statsTimerRef.current);
+      statsTimerRef.current = null;
+    }
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
-      audio: true,
+      audio: false,
     });
 
     if (localVideoRef.current) {
@@ -148,6 +162,7 @@ function App() {
     }
 
     const pc = new RTCPeerConnection(rtcConfig);
+    pcRef.current = pc;
 
     // fetch offer
     const offer = await fetchSdpOffer();
@@ -173,6 +188,7 @@ function App() {
         // Server sends "VP8/90000", so split it if needed.
         mid: media.mediaId,
         type: media.mediaType,
+        direction: "recvonly",
         port: 9,
         rtcpMux: "rtcp-mux",
         protocol: "UDP/TLS/RTP/SAVPF",
@@ -206,6 +222,13 @@ function App() {
               : undefined,
           },
         ],
+        rtcpFb: [
+          { payload: media.payloads, type: "nack" },
+          { payload: media.payloads, type: "nack", subtype: "pli" },
+          { payload: media.payloads, type: "ccm", subtype: "fir" },
+          { payload: media.payloads, type: "goog-remb" },
+          { payload: media.payloads, type: "transport-cc" },
+        ],
         fmtp: [],
       })),
     });
@@ -214,9 +237,25 @@ function App() {
       sdp: offerStr,
     });
 
-    for (const track of stream.getTracks()) {
-      pc.addTrack(track, stream);
+    const videoTrack = stream.getVideoTracks()[0] ?? null;
+    if (!videoTrack) {
+      throw new Error("missing local video track");
     }
+
+    const offeredVideoTransceiver = pc.getTransceivers().find((transceiver) => {
+      if (transceiver.mid && transceiver.mid === offer.medias[0]?.mediaId) {
+        return true;
+      }
+      return transceiver.receiver.track.kind === "video";
+    });
+
+    if (!offeredVideoTransceiver) {
+      throw new Error("missing offered video transceiver");
+    }
+
+    offeredVideoTransceiver.direction = "sendonly";
+    await offeredVideoTransceiver.sender.replaceTrack(videoTrack);
+    offeredVideoTransceiver.sender.setStreams(stream);
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -227,6 +266,17 @@ function App() {
     }
 
     const sdpAnswer = sdpTransform.parse(pc.localDescription.sdp);
+    console.log("localDescription.sdp", pc.localDescription.sdp);
+    for (const transceiver of pc.getTransceivers()) {
+      console.log("transceiver state", {
+        mid: transceiver.mid,
+        direction: transceiver.direction,
+        currentDirection: transceiver.currentDirection,
+        senderTrackKind: transceiver.sender.track?.kind,
+        senderTrackReadyState: transceiver.sender.track?.readyState,
+        receiverTrackKind: transceiver.receiver.track.kind,
+      });
+    }
     console.log({ sdpAnswer });
     await sendSdpAnswer(sdpAnswer);
 
@@ -255,6 +305,37 @@ function App() {
     pc.onsignalingstatechange = (ev) => {
       console.log("signaling state changed", ev);
     };
+
+    statsTimerRef.current = window.setInterval(async () => {
+      if (!pcRef.current) {
+        return;
+      }
+
+      const stats = await pcRef.current.getStats();
+      for (const report of stats.values()) {
+        if (report.type === "outbound-rtp" && report.kind === "video") {
+          console.log("outbound video stats", {
+            bytesSent: report.bytesSent,
+            packetsSent: report.packetsSent,
+            framesEncoded:
+              "framesEncoded" in report ? report.framesEncoded : undefined,
+          });
+        }
+        if (
+          report.type === "candidate-pair" &&
+          report.state === "succeeded" &&
+          "nominated" in report &&
+          report.nominated
+        ) {
+          console.log("selected candidate pair", {
+            localCandidateId: report.localCandidateId,
+            remoteCandidateId: report.remoteCandidateId,
+            bytesSent: report.bytesSent,
+            bytesReceived: report.bytesReceived,
+          });
+        }
+      }
+    }, 2000);
   };
 
   return (

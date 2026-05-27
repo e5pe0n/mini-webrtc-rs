@@ -35,6 +35,21 @@ pub fn is_rtp_packet(data: &[u8]) -> bool {
     payload_type <= 35 || (payload_type >= 96 && payload_type <= 127)
 }
 
+// https://datatracker.ietf.org/doc/html/rfc5761#section-4
+pub fn is_rtcp_packet(data: &[u8]) -> bool {
+    if data.len() < 8 {
+        return false;
+    }
+
+    let version = (data[0] & 0b1100_0000) >> 6;
+    if version != 2 {
+        return false;
+    }
+
+    let packet_type = data[1];
+    (192..=223).contains(&packet_type)
+}
+
 pub struct SrtpSsrcState {
     pub ssrc: u32,
     pub index: SrtpPacketIndex,

@@ -77,6 +77,13 @@ async fn handle_post_answer(
     State(state): State<Arc<AppState>>,
     Json(answer): Json<SdpMessage>,
 ) -> impl IntoResponse {
+    for media in &answer.medias {
+        info!(
+            "POST / signaling: media answer; mid={}, type={:?}, direction={:?}, payloads={}, codec={}",
+            media.media_id, media.media_type, media.direction, media.payloads, media.rtp_codec
+        );
+    }
+
     info!(
         "POST / signaling: received answer; session_id={}, medias={}",
         answer.session_id,

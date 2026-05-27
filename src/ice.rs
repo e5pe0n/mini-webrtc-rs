@@ -3,8 +3,8 @@ use rand::RngExt;
 use std::net::IpAddr;
 
 use crate::sdp::{
-    CandidateType, FingerprintType, MediaType, SdpMedia, SdpMediaCandidate, SdpMessage,
-    TransportType,
+    CandidateType, FingerprintType, MediaDirection, MediaType, SdpMedia, SdpMediaCandidate,
+    SdpMessage, TransportType,
 };
 
 pub fn generate_ice_ufrag() -> String {
@@ -61,6 +61,7 @@ impl IceAgent {
             medias: vec![SdpMedia {
                 media_id: "0".to_string(),
                 media_type: MediaType::Video,
+                direction: MediaDirection::Recvonly,
                 payloads: "96".to_string(), // VP8
                 rtp_codec: "VP8/90000".to_string(),
                 ufrag: self.local_peer.ufrag.clone(),
