@@ -1,6 +1,7 @@
 pub mod common;
 pub mod dtls;
 pub mod ice;
+pub mod sctp;
 pub mod sdp;
 pub mod signaling_server;
 pub mod srtp;
