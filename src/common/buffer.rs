@@ -7,11 +7,24 @@ const DEBUG: bool = false;
 pub struct BufReader<'a> {
     pub buf: &'a [u8],
     pub pos: usize,
+    pub start: usize,
 }
 
 impl<'a> BufReader<'a> {
     pub fn new(buf: &'a [u8]) -> Self {
-        Self { buf, pos: 0 }
+        Self {
+            buf,
+            pos: 0,
+            start: 0,
+        }
+    }
+
+    pub fn start(&mut self) {
+        self.start = self.pos;
+    }
+
+    pub fn clone_from_start(&self) -> Vec<u8> {
+        self.buf[self.start..self.pos].to_vec()
     }
 
     pub fn rest_len(&self) -> usize {
@@ -113,6 +126,10 @@ impl BufWriter {
         Self { buf: vec![] }
     }
 
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
     pub fn buf_ref(&self) -> &Vec<u8> {
         &self.buf
     }
@@ -136,6 +153,73 @@ impl BufWriter {
     pub fn write_u16(&mut self, value: u16) {
         self.buf.push((value >> 8) as u8);
         self.buf.push(value as u8);
+    }
+
+    pub fn write_u16_at(&mut self, value: u16, pos: usize) {
+        self.buf[pos] = (value >> 8) as u8;
+        self.buf[pos + 1] = value as u8;
+    }
+
+    pub fn write_u24(&mut self, value: u32) {
+        self.buf.push((value >> 16) as u8);
+        self.buf.push((value >> 8) as u8);
+        self.buf.push(value as u8);
+    }
+
+    pub fn write_u32(&mut self, value: u32) {
+        self.buf.push((value >> 24) as u8);
+        self.buf.push((value >> 16) as u8);
+        self.buf.push((value >> 8) as u8);
+        self.buf.push(value as u8);
+    }
+
+    pub fn write_bytes(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+}
+
+#[derive(Debug)]
+pub struct RefBufWriter<'a> {
+    buf: &'a mut Vec<u8>,
+}
+
+impl<'a> RefBufWriter<'a> {
+    pub fn new(buf: &'a mut Vec<u8>) -> Self {
+        Self { buf }
+    }
+
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub fn buf_ref(&self) -> &Vec<u8> {
+        self.buf
+    }
+
+    pub fn buf(&self) -> Vec<u8> {
+        self.buf.clone()
+    }
+
+    pub fn write_u8(&mut self, value: u8) {
+        self.buf.push(value);
+    }
+
+    pub fn write_u8_at(&mut self, value: u8, pos: usize) {
+        self.buf[pos] = value;
+    }
+
+    pub fn write_bytes_at(&mut self, bytes: &[u8], pos: usize) {
+        self.buf[pos..pos + bytes.len()].copy_from_slice(bytes);
+    }
+
+    pub fn write_u16(&mut self, value: u16) {
+        self.buf.push((value >> 8) as u8);
+        self.buf.push(value as u8);
+    }
+
+    pub fn write_u16_at(&mut self, value: u16, pos: usize) {
+        self.buf[pos] = (value >> 8) as u8;
+        self.buf[pos + 1] = value as u8;
     }
 
     pub fn write_u24(&mut self, value: u32) {

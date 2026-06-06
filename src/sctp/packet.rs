@@ -79,20 +79,24 @@ pub struct CommonHeader {
     pub dst_port: u16,
     pub verification_tag: u32,
     pub checksum: u32,
+    pub raw: Vec<u8>,
 }
 
 impl CommonHeader {
     pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
+        reader.start();
         let src_port = reader.read_u16()?;
         let dst_port = reader.read_u16()?;
         let verification_tag = reader.read_u32()?;
         let checksum = reader.read_u32()?;
+        let raw = reader.clone_from_start();
 
         Ok(Self {
             src_port,
             dst_port,
             verification_tag,
             checksum,
+            raw,
         })
     }
 }
