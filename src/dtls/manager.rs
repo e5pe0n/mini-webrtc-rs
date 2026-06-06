@@ -1,6 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use crate::common::buffer::{BufReader, BufWriter};
+use crate::sctp::packet::SctpPacket;
 use crate::srtp::crypto::{SrtpEncryptionKeys, generate_keying_material};
 use anyhow::{Context, Result, anyhow};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -187,6 +188,28 @@ impl DtlsManager {
                     reader
                         .read_exact(&mut buf)
                         .context("reading application data")?;
+
+                    let mut payload = if record_header.epoch > 0 {
+                        match &self.gcm {
+                            None => {
+                                warn!(
+                                    "received encrypted ApplicationData without DTLS cipher state; peer={peer_addr}"
+                                );
+                                continue;
+                            }
+                            Some(gcm) => gcm
+                                .decrypt(record_header.clone(), &buf)
+                                .context("decrypting application data")?,
+                        }
+                    } else {
+                        buf
+                    };
+
+                    // assuming all coming application data are sctp packets
+                    let mut reader = BufReader::new(&mut payload);
+                    let sctp_packet =
+                        SctpPacket::decode(&mut reader).context("decode sctp packet")?;
+                    debug!("sctp packet received; {:?}", sctp_packet.header);
                 }
                 ContentType::Handshake => {
                     debug!("Received Handshake from {}", peer_addr);

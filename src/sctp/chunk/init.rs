@@ -1,6 +1,6 @@
 use crate::{
-    common::buffer::BufReader,
-    sctp::chunk::{Chunk, ChunkType},
+    common::{buffer::BufReader, error::MiniWebrtcRsError},
+    sctp::chunk::{ChunkHeader, ChunkTrait, ChunkType},
 };
 use anyhow::{Result, anyhow};
 
@@ -23,9 +23,11 @@ use anyhow::{Result, anyhow};
 // \                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 pub struct InitChunk {
-    pub chunk_type: ChunkType,
-    pub chunk_flags: u8,
-    pub chunk_length: u16,
+    pub header: ChunkHeader,
+    pub value: InitChunkValue,
+}
+
+pub struct InitChunkValue {
     pub init_tag: u32,
     pub a_rwnd: u32,
     pub num_outbound_streams: u16,
@@ -33,20 +35,8 @@ pub struct InitChunk {
     pub init_tsn: u32,
 }
 
-impl InitChunk {
-    pub fn decode(reader: &mut BufReader) -> Result<Self> {
-        let chunk_type = ChunkType::from(reader.read_u8()?);
-        let expected_chunk_type = InitChunk::get_chunk_type();
-        if chunk_type != expected_chunk_type {
-            anyhow::bail!(anyhow!(
-                "invalid chunk type: expected={:?}, actual={:?}",
-                expected_chunk_type,
-                chunk_type
-            ));
-        }
-
-        let chunk_flags = reader.read_u8()?;
-        let chunk_length = reader.read_u16()?;
+impl InitChunkValue {
+    pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
         let init_tag = reader.read_u32()?;
         let a_rwnd = reader.read_u32()?;
         let num_outbound_streams = reader.read_u16()?;
@@ -54,24 +44,11 @@ impl InitChunk {
         let init_tsn = reader.read_u32()?;
 
         Ok(Self {
-            chunk_type,
-            chunk_flags,
-            chunk_length,
             init_tag,
             a_rwnd,
             num_outbound_streams,
             num_inbound_streams,
             init_tsn,
         })
-    }
-}
-
-impl Chunk for InitChunk {
-    fn get_chunk_type() -> ChunkType {
-        ChunkType::Init
-    }
-
-    fn get_chunk_length(&self) -> u16 {
-        self.chunk_length
     }
 }

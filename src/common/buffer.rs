@@ -1,9 +1,9 @@
-use super::error::Error;
+use super::error::MiniWebrtcRsError;
 use tracing::debug;
 
 const DEBUG: bool = false;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BufReader<'a> {
     pub buf: &'a [u8],
     pub pos: usize,
@@ -18,7 +18,7 @@ impl<'a> BufReader<'a> {
         self.buf.len() - self.pos
     }
 
-    pub fn read_u8(&mut self) -> Result<u8, Error> {
+    pub fn read_u8(&mut self) -> Result<u8, MiniWebrtcRsError> {
         if self.pos < self.buf.len() {
             let b = self.buf[self.pos];
             self.pos += 1;
@@ -29,14 +29,14 @@ impl<'a> BufReader<'a> {
 
             Ok(b)
         } else {
-            Err(Error::BufferOutOfIndexError {
+            Err(MiniWebrtcRsError::BufferOutOfIndexError {
                 pos: self.pos + 1,
                 len: self.buf.len(),
             })
         }
     }
 
-    pub fn read_u16(&mut self) -> Result<u16, Error> {
+    pub fn read_u16(&mut self) -> Result<u16, MiniWebrtcRsError> {
         if self.pos + 2 <= self.buf.len() {
             let b = u16::from_be_bytes(self.buf[self.pos..self.pos + 2].try_into().unwrap());
             self.pos += 2;
@@ -47,14 +47,14 @@ impl<'a> BufReader<'a> {
 
             Ok(b)
         } else {
-            Err(Error::BufferOutOfIndexError {
+            Err(MiniWebrtcRsError::BufferOutOfIndexError {
                 pos: self.pos + 2,
                 len: self.buf.len(),
             })
         }
     }
 
-    pub fn read_u24(&mut self) -> Result<u32, Error> {
+    pub fn read_u24(&mut self) -> Result<u32, MiniWebrtcRsError> {
         let head = self.read_u16()?;
         let tail = self.read_u8()?;
         let res = ((head as u32) << 8) + (tail as u32);
@@ -66,7 +66,7 @@ impl<'a> BufReader<'a> {
         Ok(res)
     }
 
-    pub fn read_u32(&mut self) -> Result<u32, Error> {
+    pub fn read_u32(&mut self) -> Result<u32, MiniWebrtcRsError> {
         if self.pos + 4 <= self.buf.len() {
             let b = u32::from_be_bytes(self.buf[self.pos..self.pos + 4].try_into().unwrap());
             self.pos += 4;
@@ -77,16 +77,16 @@ impl<'a> BufReader<'a> {
 
             Ok(b)
         } else {
-            Err(Error::BufferOutOfIndexError {
+            Err(MiniWebrtcRsError::BufferOutOfIndexError {
                 pos: self.pos + 4,
                 len: self.buf.len(),
             })
         }
     }
 
-    pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error> {
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), MiniWebrtcRsError> {
         if self.pos + buf.len() > self.buf.len() {
-            return Err(Error::BufferOutOfIndexError {
+            return Err(MiniWebrtcRsError::BufferOutOfIndexError {
                 pos: self.pos + buf.len(),
                 len: self.buf.len(),
             });
