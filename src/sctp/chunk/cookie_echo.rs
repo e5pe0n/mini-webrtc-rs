@@ -22,33 +22,19 @@ use anyhow::Result;
 // /              Optional/Variable-Length Parameters              /
 // \                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-pub struct InitChunk {
+pub struct CookieEchoChunk {
     pub header: ChunkHeader,
-    pub value: InitChunkValue,
+    pub value: CookieEchoChunkValue,
 }
 
-pub struct InitChunkValue {
-    pub init_tag: u32,
-    pub a_rwnd: u32,
-    pub num_outbound_streams: u16,
-    pub num_inbound_streams: u16,
-    pub init_tsn: u32,
+pub struct CookieEchoChunkValue {
+    pub cookie: Vec<u8>,
 }
 
-impl InitChunkValue {
-    pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
-        let init_tag = reader.read_u32()?;
-        let a_rwnd = reader.read_u32()?;
-        let num_outbound_streams = reader.read_u16()?;
-        let num_inbound_streams = reader.read_u16()?;
-        let init_tsn = reader.read_u32()?;
-
-        Ok(Self {
-            init_tag,
-            a_rwnd,
-            num_outbound_streams,
-            num_inbound_streams,
-            init_tsn,
-        })
+impl CookieEchoChunkValue {
+    pub fn decode(reader: &mut BufReader, cookie_length: u16) -> Result<Self, MiniWebrtcRsError> {
+        let mut cookie = vec![0u8; cookie_length as usize];
+        reader.read_exact(&mut cookie)?;
+        Ok(Self { cookie })
     }
 }

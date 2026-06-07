@@ -1,3 +1,5 @@
+pub mod cookie_ack;
+pub mod cookie_echo;
 pub mod init;
 pub mod init_ack;
 
@@ -10,7 +12,10 @@ use crate::{
         buffer::{BufReader, BufWriter, RefBufWriter},
         error::MiniWebrtcRsError,
     },
-    sctp::chunk::init::{InitChunk, InitChunkValue},
+    sctp::chunk::{
+        cookie_echo::{CookieEchoChunk, CookieEchoChunkValue},
+        init::{InitChunk, InitChunkValue},
+    },
 };
 
 #[derive(FromPrimitive)]
@@ -41,6 +46,7 @@ impl From<ChunkType> for u8 {
 
 pub enum Chunk {
     Init(InitChunk),
+    CookieEcho(CookieEchoChunk),
 }
 
 impl Chunk {
@@ -52,12 +58,20 @@ impl Chunk {
                 let value = InitChunkValue::decode(reader)?;
                 Ok(Chunk::Init(InitChunk { header, value }))
             }
+            ChunkType::CookieEcho => {
+                let cookie_length = header.chunk_length - COOKIE_LENGTH_IN_BYTES;
+                let value = CookieEchoChunkValue::decode(reader, cookie_length)?;
+                Ok(Chunk::CookieEcho(CookieEchoChunk { header, value }))
+            }
+
             _ => Err(MiniWebrtcRsError::NotImplementedError {
                 message: format!("{:?}", header.chunk_type),
             }),
         }
     }
 }
+
+pub const CHUNK_HEADER_LENGTH_IN_BYTES: usize = 4;
 
 pub struct ChunkHeader {
     pub chunk_type: ChunkType,
@@ -107,6 +121,8 @@ pub trait ChunkTrait {
     fn get_chunk_type(&self) -> ChunkType;
     fn get_chunk_length(&self) -> u16;
 }
+
+pub const COOKIE_LENGTH_IN_BYTES: u16 = 32;
 
 #[derive(Debug, Clone)]
 pub enum ChunkParam {
