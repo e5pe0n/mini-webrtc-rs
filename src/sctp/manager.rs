@@ -86,6 +86,11 @@ impl SctpManager {
                     Ok(())
                 }
             },
+            Chunk::Data(chunk) => {
+                // TODO: handle data
+                // TODO: send SACK
+                Ok(())
+            }
         }
     }
 }

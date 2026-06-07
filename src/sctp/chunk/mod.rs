@@ -1,9 +1,10 @@
 pub mod cookie_ack;
 pub mod cookie_echo;
+pub mod data;
 pub mod init;
 pub mod init_ack;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use mini_webrtc_derive::FromPrimitive;
 use tracing::warn;
 
@@ -14,6 +15,7 @@ use crate::{
     },
     sctp::chunk::{
         cookie_echo::{CookieEchoChunk, CookieEchoChunkValue},
+        data::DataChunk,
         init::{InitChunk, InitChunkValue},
     },
 };
@@ -45,6 +47,7 @@ impl From<ChunkType> for u8 {
 }
 
 pub enum Chunk {
+    Data(DataChunk),
     Init(InitChunk),
     CookieEcho(CookieEchoChunk),
 }
