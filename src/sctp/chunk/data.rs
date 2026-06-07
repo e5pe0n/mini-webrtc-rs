@@ -19,11 +19,13 @@ use crate::{
 // /                 User Data (seq n of Stream S)                 /
 // \                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#[derive(Debug)]
 pub struct DataChunk {
     pub header: ChunkHeader,
     pub value: DataChunkValue,
 }
 
+#[derive(Debug)]
 pub struct DataChunkValue {
     pub tsn: u32,
     pub stream_id: u16,

@@ -22,11 +22,13 @@ use anyhow::Result;
 // /              Optional/Variable-Length Parameters              /
 // \                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#[derive(Debug)]
 pub struct CookieEchoChunk {
     pub header: ChunkHeader,
     pub value: CookieEchoChunkValue,
 }
 
+#[derive(Debug)]
 pub struct CookieEchoChunkValue {
     pub cookie: Vec<u8>,
 }

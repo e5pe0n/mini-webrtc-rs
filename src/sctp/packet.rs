@@ -33,7 +33,7 @@ use crate::{
 // /                          Chunk Value                          /
 // \                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[derive(Debug)]
 pub struct SctpPacket {
     pub header: CommonHeader,
     pub chunks: Vec<Chunk>,

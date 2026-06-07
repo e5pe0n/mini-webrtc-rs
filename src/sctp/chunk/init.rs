@@ -22,11 +22,13 @@ use anyhow::Result;
 // /              Optional/Variable-Length Parameters              /
 // \                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#[derive(Debug)]
 pub struct InitChunk {
     pub header: ChunkHeader,
     pub value: InitChunkValue,
 }
 
+#[derive(Debug)]
 pub struct InitChunkValue {
     pub init_tag: u32,
     pub a_rwnd: u32,

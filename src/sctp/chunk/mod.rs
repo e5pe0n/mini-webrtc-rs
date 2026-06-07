@@ -3,6 +3,7 @@ pub mod cookie_echo;
 pub mod data;
 pub mod init;
 pub mod init_ack;
+pub mod sack;
 
 use anyhow::Result;
 use mini_webrtc_derive::FromPrimitive;
@@ -17,6 +18,7 @@ use crate::{
         cookie_echo::{CookieEchoChunk, CookieEchoChunkValue},
         data::DataChunk,
         init::{InitChunk, InitChunkValue},
+        sack::{SackChunk, SackChunkValue},
     },
 };
 
@@ -46,10 +48,13 @@ impl From<ChunkType> for u8 {
     }
 }
 
+#[derive(Debug)]
 pub enum Chunk {
     Data(DataChunk),
     Init(InitChunk),
     CookieEcho(CookieEchoChunk),
+    Sack(SackChunk),
+    NotImplemented,
 }
 
 impl Chunk {
@@ -66,7 +71,10 @@ impl Chunk {
                 let value = CookieEchoChunkValue::decode(reader, cookie_length)?;
                 Ok(Chunk::CookieEcho(CookieEchoChunk { header, value }))
             }
-
+            ChunkType::Sack => {
+                let value = SackChunkValue::decode(reader)?;
+                Ok(Chunk::Sack(SackChunk::new(Some(header), value)))
+            }
             _ => Err(MiniWebrtcRsError::NotImplementedError {
                 message: format!("{:?}", header.chunk_type),
             }),
@@ -76,6 +84,7 @@ impl Chunk {
 
 pub const CHUNK_HEADER_LENGTH_IN_BYTES: usize = 4;
 
+#[derive(Debug)]
 pub struct ChunkHeader {
     pub chunk_type: ChunkType,
     pub chunk_flags: u8,
