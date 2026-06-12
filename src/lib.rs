@@ -1,4 +1,5 @@
 pub mod common;
+pub mod data_channel;
 pub mod dtls;
 pub mod ice;
 pub mod sctp;
