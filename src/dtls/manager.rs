@@ -1,7 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use crate::common::buffer::{BufReader, BufWriter};
-use crate::sctp::packet::SctpPacket;
 use crate::srtp::crypto::{SrtpEncryptionKeys, generate_keying_material};
 use anyhow::{Context, Result, anyhow};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -10,6 +9,7 @@ use p256::pkcs8::DecodePublicKey;
 use rcgen::{CertifiedKey, KeyPair};
 use sha2::{Digest, Sha256};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, warn};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
@@ -121,6 +121,9 @@ pub struct DtlsManager {
     pub server_random: Option<Random>,
     pub client_certificate: Option<Vec<u8>>,
     pub gcm: Option<Gcm>,
+    pub inbound_sctp_tx: UnboundedSender<Vec<u8>>,
+    pub outbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
+    peer_addr: Option<SocketAddr>,
 }
 
 impl DtlsManager {
@@ -128,6 +131,8 @@ impl DtlsManager {
         socket: Arc<UdpSocket>,
         certified_key: CertifiedKey<KeyPair>,
         fingerprint: Fingerprint,
+        inbound_sctp_tx: UnboundedSender<Vec<u8>>,
+        outbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
     ) -> Self {
         Self {
             socket,
@@ -154,10 +159,14 @@ impl DtlsManager {
             server_random: None,
             client_certificate: None,
             gcm: None,
+            inbound_sctp_tx,
+            outbound_sctp_rx,
+            peer_addr: None,
         }
     }
 
     pub async fn handle_dtls_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+        self.peer_addr = Some(peer_addr);
         let mut reader = BufReader::new(data);
 
         while reader.rest_len() > 0 {
@@ -189,7 +198,7 @@ impl DtlsManager {
                         .read_exact(&mut buf)
                         .context("reading application data")?;
 
-                    let mut payload = if record_header.epoch > 0 {
+                    let payload = if record_header.epoch > 0 {
                         match &self.gcm {
                             None => {
                                 warn!(
@@ -206,10 +215,7 @@ impl DtlsManager {
                     };
 
                     // assuming all coming application data are sctp packets
-                    let mut reader = BufReader::new(&mut payload);
-                    let sctp_packet =
-                        SctpPacket::decode(&mut reader).context("decode sctp packet")?;
-                    debug!("sctp packet received; {:?}", sctp_packet.header);
+                    self.inbound_sctp_tx.send(payload)?;
                 }
                 ContentType::Handshake => {
                     debug!("Received Handshake from {}", peer_addr);
@@ -255,56 +261,49 @@ impl DtlsManager {
                         self.next_client_message_seq += 1;
                         self.handle_handshake_message(message, peer_addr).await?;
                     };
-
-                    match self.state {
-                        DtlsState::Connected => {
-                            // on dtls connected handler
-                            // // export key material
-                            // let profile = match *&self
-                            //     .srtp_protection_profile
-                            //     .ok_or(anyhow!("srtp protection profile is none."))?
-                            // {
-                            //     SrtpProtectionProfile::SrtpAeadAes128Gcm(profile) => Ok(profile),
-                            //     _ => Err(anyhow!("unsupported srtp protection profile.")),
-                            // }?;
-                            // let keying_material = generate_keying_material(
-                            //     &self
-                            //         .master_secret
-                            //         .clone()
-                            //         .ok_or(anyhow!("master secret is none."))?,
-                            //     &self
-                            //         .client_random
-                            //         .ok_or(anyhow!("client random is none."))?
-                            //         .to_bytes(),
-                            //     &self
-                            //         .server_random
-                            //         .ok_or(anyhow!("server random is none."))?
-                            //         .to_bytes(),
-                            //     profile.key_length * 2 + profile.salt_length * 2,
-                            // );
-                            // // init srtp cipher suite
-                            // let encryption_keys = SrtpEncryptionKeys {
-                            //     client_master_key: keying_material[..profile.key_length].to_vec(),
-                            //     client_master_salt: keying_material
-                            //         [profile.key_length..profile.key_length * 2]
-                            //         .to_vec(),
-                            //     server_master_key: keying_material[profile.key_length * 2..].to_vec(),
-                            //     server_master_salt: keying_material
-                            //         [profile.key_length * 2 + profile.salt_length..]
-                            //         .to_vec(),
-                            // };
-                            // // use client key and salt to decrypt data from client
-                            // let srtp_gcm = SrtpGcm::new(
-                            //     &encryption_keys.client_master_key,
-                            //     &encryption_keys.client_master_salt,
-                            // );
-                            // self.srtp_gcm = Some(srtp_gcm);
-                        }
-                        _ => {}
-                    }
                 }
             }
         }
+        Ok(())
+    }
+
+    pub async fn recv_outbound_sctp(&mut self) -> Option<Vec<u8>> {
+        self.outbound_sctp_rx.recv().await
+    }
+
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer_addr
+    }
+
+    pub async fn send_application_data(
+        &mut self,
+        payload: &[u8],
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let mut record_header = RecordHeader::new(
+            ContentType::ApplicationData,
+            DtlsVersion::V1_2,
+            self.epoch,
+            self.sequence_number,
+            payload.len() as u16,
+        );
+
+        let encoded_payload = if self.epoch > 0 {
+            let gcm = self.gcm.as_ref().ok_or(anyhow!(
+                "dtls cipher state not initialized for application data"
+            ))?;
+            let encrypted_payload = gcm.encrypt(record_header.clone(), payload.to_vec())?;
+            record_header.length = encrypted_payload.len() as u16;
+            encrypted_payload
+        } else {
+            payload.to_vec()
+        };
+
+        let mut writer = BufWriter::new();
+        record_header.encode(&mut writer);
+        writer.write_bytes(&encoded_payload);
+        self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
+        self.sequence_number += 1;
         Ok(())
     }
 

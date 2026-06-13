@@ -4,7 +4,7 @@ use tracing::warn;
 
 use crate::{
     common::{
-        buffer::BufReader,
+        buffer::{BufReader, BufWriter},
         error::MiniWebrtcRsError::{self, BufferOutOfIndexError},
     },
     sctp::chunk::Chunk,
@@ -60,6 +60,25 @@ impl SctpPacket {
             }
         }
         Ok(Self { header, chunks })
+    }
+
+    pub fn encode_single_chunk(
+        src_port: u16,
+        dst_port: u16,
+        verification_tag: u32,
+        chunk_raw: &[u8],
+    ) -> Vec<u8> {
+        let mut writer = BufWriter::new();
+        writer.write_u16(src_port);
+        writer.write_u16(dst_port);
+        writer.write_u32(verification_tag);
+        writer.write_u32(0);
+        writer.write_bytes(chunk_raw);
+
+        let mut raw = writer.buf();
+        let checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(&raw);
+        raw[8..12].copy_from_slice(&checksum.to_be_bytes());
+        raw
     }
 }
 

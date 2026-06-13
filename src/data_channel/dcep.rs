@@ -77,3 +77,16 @@ impl DataChannelOpenMessage {
         })
     }
 }
+
+pub struct DataChannelAckMessage {
+    message_type: MessageType,
+}
+
+impl DataChannelAckMessage {
+    pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
+        let message_type = reader.read_u8()?;
+        Ok(Self {
+            message_type: MessageType::try_from(message_type)?,
+        })
+    }
+}

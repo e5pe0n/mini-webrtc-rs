@@ -16,7 +16,7 @@ use crate::{
     },
     sctp::chunk::{
         cookie_echo::{CookieEchoChunk, CookieEchoChunkValue},
-        data::DataChunk,
+        data::{DataChunk, DataChunkValue},
         init::{InitChunk, InitChunkValue},
         sack::{SackChunk, SackChunkValue},
     },
@@ -62,6 +62,13 @@ impl Chunk {
         let header = ChunkHeader::decode(reader)?;
 
         match header.chunk_type {
+            ChunkType::Data => {
+                let value = DataChunkValue::decode(
+                    reader,
+                    header.chunk_length - CHUNK_HEADER_LENGTH_IN_BYTES as u16,
+                )?;
+                Ok(Chunk::Data(DataChunk::new(Some(header), value)))
+            }
             ChunkType::Init => {
                 let value = InitChunkValue::decode(reader)?;
                 Ok(Chunk::Init(InitChunk { header, value }))
