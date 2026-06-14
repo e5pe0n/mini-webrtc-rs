@@ -87,7 +87,7 @@ impl PeerConnection {
         Ok(())
     }
 
-    pub async fn create_data_channel(&self) -> Result<DataChannel> {
-        Ok(DataChannel::new(0, self.udp_server.sctp_manager.clone()).await)
+    pub async fn create_data_channel(&mut self) -> Result<DataChannel> {
+        self.udp_server.create_data_channel().await
     }
 }

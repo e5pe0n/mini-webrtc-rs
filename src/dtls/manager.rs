@@ -1,6 +1,9 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr};
 
+use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
+use crate::dtls::ApplicationDataMessage;
+use crate::dtls::DtlsMessage::ApplicationData;
 use crate::srtp::crypto::{SrtpEncryptionKeys, generate_keying_material};
 use anyhow::{Context, Result, anyhow};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -8,7 +11,6 @@ use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use rcgen::{CertifiedKey, KeyPair};
 use sha2::{Digest, Sha256};
-use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, warn};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -97,7 +99,8 @@ impl PlainHandshakeMessage {
 }
 
 pub struct DtlsManager {
-    pub socket: Arc<UdpSocket>,
+    inbound_message_rx: UnboundedReceiver<TransportMessage>,
+    outbound_message_tx: UnboundedSender<TransportMessage>,
     pub certified_key: CertifiedKey<KeyPair>,
     pub fingerprint: Fingerprint,
     pub state: DtlsState,
@@ -121,21 +124,23 @@ pub struct DtlsManager {
     pub server_random: Option<Random>,
     pub client_certificate: Option<Vec<u8>>,
     pub gcm: Option<Gcm>,
-    pub inbound_sctp_tx: UnboundedSender<Vec<u8>>,
-    pub outbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
+    pub dtls_to_sctp_tx: UnboundedSender<Vec<u8>>,
+    pub sctp_to_dtls_rx: UnboundedReceiver<Vec<u8>>,
     peer_addr: Option<SocketAddr>,
 }
 
 impl DtlsManager {
     pub fn new(
-        socket: Arc<UdpSocket>,
+        inbound_message_rx: UnboundedReceiver<TransportMessage>,
+        outbound_message_tx: UnboundedSender<TransportMessage>,
         certified_key: CertifiedKey<KeyPair>,
         fingerprint: Fingerprint,
         inbound_sctp_tx: UnboundedSender<Vec<u8>>,
         outbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
     ) -> Self {
         Self {
-            socket,
+            inbound_message_rx,
+            outbound_message_tx,
             certified_key,
             fingerprint,
             state: DtlsState::New,
@@ -159,8 +164,8 @@ impl DtlsManager {
             server_random: None,
             client_certificate: None,
             gcm: None,
-            inbound_sctp_tx,
-            outbound_sctp_rx,
+            dtls_to_sctp_tx: inbound_sctp_tx,
+            sctp_to_dtls_rx: outbound_sctp_rx,
             peer_addr: None,
         }
     }
@@ -215,7 +220,7 @@ impl DtlsManager {
                     };
 
                     // assuming all coming application data are sctp packets
-                    self.inbound_sctp_tx.send(payload)?;
+                    self.dtls_to_sctp_tx.send(payload)?;
                 }
                 ContentType::Handshake => {
                     debug!("Received Handshake from {}", peer_addr);
@@ -267,43 +272,39 @@ impl DtlsManager {
         Ok(())
     }
 
-    pub async fn recv_outbound_sctp(&mut self) -> Option<Vec<u8>> {
-        self.outbound_sctp_rx.recv().await
+    pub async fn recv_outbound_sctp(&mut self) -> Result<()> {
+        if let Some(outbound_sctp) = self.sctp_to_dtls_rx.recv().await {
+            match self.state {
+                DtlsState::Connected => {
+                    self.send_application_data(&outbound_sctp).await?;
+                }
+                _ => {
+                    warn!(
+                        "drop outbound sctp data before dtls connected; len={}",
+                        outbound_sctp.len()
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
-    pub fn peer_addr(&self) -> Option<SocketAddr> {
-        self.peer_addr
-    }
+    async fn send_application_data(&mut self, payload: &[u8]) -> Result<()> {
+        match self.peer_addr {
+            Some(peer_addr) => {
+                self.send_message(
+                    ApplicationData(ApplicationDataMessage {
+                        payload: payload.to_vec(),
+                    }),
+                    peer_addr,
+                )
+                .await?;
+            }
+            None => {
+                warn!("peer addr is none; discard application data");
+            }
+        }
 
-    pub async fn send_application_data(
-        &mut self,
-        payload: &[u8],
-        peer_addr: SocketAddr,
-    ) -> Result<()> {
-        let mut record_header = RecordHeader::new(
-            ContentType::ApplicationData,
-            DtlsVersion::V1_2,
-            self.epoch,
-            self.sequence_number,
-            payload.len() as u16,
-        );
-
-        let encoded_payload = if self.epoch > 0 {
-            let gcm = self.gcm.as_ref().ok_or(anyhow!(
-                "dtls cipher state not initialized for application data"
-            ))?;
-            let encrypted_payload = gcm.encrypt(record_header.clone(), payload.to_vec())?;
-            record_header.length = encrypted_payload.len() as u16;
-            encrypted_payload
-        } else {
-            payload.to_vec()
-        };
-
-        let mut writer = BufWriter::new();
-        record_header.encode(&mut writer);
-        writer.write_bytes(&encoded_payload);
-        self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
-        self.sequence_number += 1;
         Ok(())
     }
 
@@ -648,6 +649,7 @@ impl DtlsManager {
                 message.encode(&mut writer);
                 writer.buf()
             }
+            DtlsMessage::ApplicationData(message) => message.payload.clone(),
         };
 
         // Create Record Header
@@ -673,7 +675,10 @@ impl DtlsManager {
         record_header.encode(&mut writer);
         writer.write_bytes(&encoded_message);
 
-        self.socket.send_to(&writer.buf_ref(), peer_addr).await?;
+        self.outbound_message_tx.send(TransportMessage {
+            peer_addr,
+            data: writer.buf(),
+        })?;
 
         self.sequence_number += 1;
         Ok(())

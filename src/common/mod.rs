@@ -1,6 +1,8 @@
 pub mod buffer;
 pub mod error;
 
+use std::net::SocketAddr;
+
 use anyhow::{Result, anyhow};
 
 pub fn decode_hex(s: &str) -> Result<Vec<u8>> {
@@ -17,4 +19,9 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>> {
         }
         Ok(v)
     }
+}
+
+pub struct TransportMessage {
+    pub peer_addr: SocketAddr,
+    pub data: Vec<u8>,
 }

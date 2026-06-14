@@ -1,4 +1,6 @@
+use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
+use crate::data_channel::{DataChannel, InternalDataChannelMessage};
 use crate::dtls::manager::DtlsManager;
 use crate::dtls::{DtlsState, Fingerprint, is_dtls_packet};
 use crate::ice::IceAgent;
@@ -13,17 +15,20 @@ use rcgen::{CertifiedKey, KeyPair};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
 
 pub struct UdpServer {
     pub ice_agent: Arc<Mutex<IceAgent>>,
     pub socket: Arc<UdpSocket>,
+    pub inbound_message_tx: UnboundedSender<TransportMessage>,
+    pub outbound_message_rx: UnboundedReceiver<TransportMessage>,
+    pub inbound_dtls_tx: UnboundedSender<TransportMessage>,
+    pub inbound_dtls_rx: UnboundedReceiver<TransportMessage>,
     pub dtls_manager: DtlsManager,
     pub srtp_manager: Option<SrtpManager>,
-    pub sctp_manager: Arc<Mutex<SctpManager>>,
-    pub logged_first_dtls_packet: bool,
-    pub logged_first_stun_response: bool,
+    pub sctp_manager: SctpManager,
 }
 
 impl UdpServer {
@@ -37,28 +42,49 @@ impl UdpServer {
         let socket = Arc::new(UdpSocket::bind(addr).await?);
         info!("Udp Server listening on {}", addr);
 
+        let (inbound_message_tx, inbound_message_rx) =
+            mpsc::unbounded_channel::<TransportMessage>();
+        let (outbound_message_tx, outbound_message_rx) =
+            mpsc::unbounded_channel::<TransportMessage>();
+
+        let (inbound_dtls_tx, inbound_dtls_rx) = mpsc::unbounded_channel::<TransportMessage>();
+
         let (inbound_sctp_tx, inbound_sctp_rx) = mpsc::unbounded_channel();
         let (outbound_sctp_tx, outbound_sctp_rx) = mpsc::unbounded_channel();
+
         let dtls_manager = DtlsManager::new(
-            socket.clone(),
+            inbound_message_rx,
+            outbound_message_tx,
             certified_key,
             fingerprint,
             inbound_sctp_tx,
             outbound_sctp_rx,
         );
+        let sctp_manager = SctpManager::new(outbound_sctp_tx, inbound_sctp_rx);
 
         Ok(UdpServer {
             ice_agent,
             socket,
+            inbound_message_tx,
+            outbound_message_rx,
+            inbound_dtls_tx,
+            inbound_dtls_rx,
             dtls_manager,
             srtp_manager: None,
-            sctp_manager: Arc::new(Mutex::new(SctpManager::new(
-                outbound_sctp_tx,
-                inbound_sctp_rx,
-            ))),
-            logged_first_dtls_packet: false,
-            logged_first_stun_response: false,
+            sctp_manager,
         })
+    }
+
+    pub async fn create_data_channel(&mut self) -> Result<DataChannel> {
+        let (inbound_dc_tx, inbound_dc_rx) =
+            mpsc::unbounded_channel::<InternalDataChannelMessage>();
+        let (outbound_dc_tx, outbound_dc_rx) =
+            mpsc::unbounded_channel::<InternalDataChannelMessage>();
+
+        self.sctp_manager
+            .set_data_channel_transport(inbound_dc_tx, outbound_dc_rx);
+
+        Ok(DataChannel::new(0, inbound_dc_rx, outbound_dc_tx).await)
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -70,46 +96,32 @@ impl UdpServer {
                     let (len, peer_addr) = recv_result?;
                     debug!("Received {} bytes from {}", len, peer_addr);
 
-                    self.handle_message(&buf[..len], peer_addr).await?;
-                    self.sctp_manager.lock().await.process_inbound_pending()?;
+                    self.handle_inbound_message(&buf[..len], peer_addr).await?;
                 }
-                outbound_sctp = self.dtls_manager.recv_outbound_sctp() => {
-                    let outbound_sctp = outbound_sctp.ok_or(anyhow!("dtls outbound sctp channel closed"))?;
-                    let peer_addr = self
-                        .dtls_manager
-                        .peer_addr()
-                        .ok_or(anyhow!("dtls peer address is not initialized yet"))?;
-
-                    if !matches!(self.dtls_manager.state, DtlsState::Connected) {
-                        warn!("drop outbound sctp data before dtls connected; len={}", outbound_sctp.len());
-                        continue;
+                outbound_message = self.outbound_message_rx.recv() => {
+                    if let Some(message) = outbound_message {
+                        self.socket.send_to(&message.data, message.peer_addr).await?;
+                        debug!("Sent {} bytes to {}", &message.data.len(), message.peer_addr);
                     }
-
-                    self
-                        .dtls_manager
-                        .send_application_data(&outbound_sctp, peer_addr)
-                        .await?;
                 }
+                _ = self.dtls_manager.recv_outbound_sctp() => {}
+                _ = self.sctp_manager.recv() => {}
             }
         }
     }
 
-    async fn handle_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+    async fn handle_inbound_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         if data.is_empty() {
             return Ok(());
         }
 
         if StunMessage::is_stun_message(data) {
-            info!("stun message received");
+            debug!("stun message received");
             return self.handle_stun_message(data, peer_addr).await;
         }
 
         if is_dtls_packet(data) {
-            info!("dtls packet received");
-            if !self.logged_first_dtls_packet {
-                info!("received first dtls packet from {peer_addr}");
-                self.logged_first_dtls_packet = true;
-            }
+            debug!("dtls packet received");
             if let Err(err) = self.dtls_manager.handle_dtls_packet(data, peer_addr).await {
                 if matches!(self.dtls_manager.state, DtlsState::Connected) {
                     warn!(
@@ -130,12 +142,12 @@ impl UdpServer {
         }
 
         if is_rtp_packet(data) {
-            info!("rtp packet received");
+            debug!("rtp packet received");
             return self.handle_rtp_packet(data, peer_addr).await;
         }
 
         if is_rtcp_packet(data) {
-            info!(
+            debug!(
                 "rtcp-like packet received; peer={}, len={}, pt={}",
                 peer_addr,
                 data.len(),
@@ -144,7 +156,7 @@ impl UdpServer {
             return Ok(());
         }
 
-        info!(
+        debug!(
             "ignored unknown data; peer={}, len={}, first_byte=0x{:02x}",
             peer_addr,
             data.len(),
@@ -236,10 +248,6 @@ impl UdpServer {
         self.socket
             .send_to(&response_message.raw, peer_addr)
             .await?;
-        if !self.logged_first_stun_response {
-            info!("sent first stun binding success response to {peer_addr}");
-            self.logged_first_stun_response = true;
-        }
         Ok(())
     }
 }

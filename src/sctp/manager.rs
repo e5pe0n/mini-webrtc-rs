@@ -2,12 +2,12 @@ use std::{collections::HashMap, u16};
 
 use anyhow::{Result, anyhow};
 use rand::{RngExt, random};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
-use tracing::{info, warn};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tracing::{debug, info, warn};
 
 use crate::{
     common::buffer::BufReader,
-    data_channel::IncomingDataChannelMessage,
+    data_channel::InternalDataChannelMessage,
     sctp::{
         chunk::{
             COOKIE_LENGTH_IN_BYTES, Chunk, ChunkParam,
@@ -23,6 +23,8 @@ use crate::{
 pub struct SctpManager {
     inbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
     outbound_sctp_tx: UnboundedSender<Vec<u8>>,
+    inbound_dc_tx: Option<UnboundedSender<InternalDataChannelMessage>>,
+    outbound_dc_rx: Option<UnboundedReceiver<InternalDataChannelMessage>>,
     local_a_rwnd: u32,
     remote_a_rwnd: u32,
     max_num_outbound_streams: u16,
@@ -34,7 +36,6 @@ pub struct SctpManager {
     local_port: Option<u16>,
     remote_port: Option<u16>,
     stream_seq_nums: HashMap<u16, u16>,
-    data_channels: HashMap<u16, UnboundedSender<IncomingDataChannelMessage>>,
 }
 
 impl SctpManager {
@@ -45,6 +46,8 @@ impl SctpManager {
         Self {
             outbound_sctp_tx,
             inbound_sctp_rx,
+            inbound_dc_tx: None,
+            outbound_dc_rx: None,
             local_a_rwnd: 1024 * 1024,
             remote_a_rwnd: 0,
             max_num_outbound_streams: u16::MAX,
@@ -56,17 +59,16 @@ impl SctpManager {
             local_port: None,
             remote_port: None,
             stream_seq_nums: HashMap::new(),
-            data_channels: HashMap::new(),
         }
     }
 
-    pub fn register_data_channel(
+    pub fn set_data_channel_transport(
         &mut self,
-        stream_id: u16,
-    ) -> UnboundedReceiver<IncomingDataChannelMessage> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.data_channels.insert(stream_id, tx);
-        rx
+        inbound_dc_tx: UnboundedSender<InternalDataChannelMessage>,
+        outbound_dc_rx: UnboundedReceiver<InternalDataChannelMessage>,
+    ) {
+        self.inbound_dc_tx = Some(inbound_dc_tx);
+        self.outbound_dc_rx = Some(outbound_dc_rx);
     }
 
     pub async fn send_data(
@@ -92,14 +94,42 @@ impl SctpManager {
         self.send_sctp_chunk(data_chunk.raw, None)
     }
 
-    pub fn process_inbound_pending(&mut self) -> Result<()> {
-        loop {
-            match self.inbound_sctp_rx.try_recv() {
-                Ok(data) => self.handle_inbound_packet(&data)?,
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
+    pub async fn recv(&mut self) -> Result<()> {
+        enum SctpEvent {
+            InboundSctp(Vec<u8>),
+            OutboundDc(InternalDataChannelMessage),
+            Closed,
         }
+
+        let event = if let Some(outbound_dc_rx) = self.outbound_dc_rx.as_mut() {
+            tokio::select! {
+                inbound_sctp_packet = self.inbound_sctp_rx.recv() => {
+                    inbound_sctp_packet.map(SctpEvent::InboundSctp).unwrap_or(SctpEvent::Closed)
+                }
+                outbound_dc_message = outbound_dc_rx.recv() => {
+                    outbound_dc_message.map(SctpEvent::OutboundDc).unwrap_or(SctpEvent::Closed)
+                }
+            }
+        } else {
+            match self.inbound_sctp_rx.recv().await {
+                Some(packet) => SctpEvent::InboundSctp(packet),
+                None => SctpEvent::Closed,
+            }
+        };
+
+        match event {
+            SctpEvent::InboundSctp(packet) => self.handle_inbound_packet(&packet)?,
+            SctpEvent::OutboundDc(message) => {
+                self.send_data(
+                    message.stream_id,
+                    message.payload_protocol_id,
+                    message.user_data,
+                )
+                .await?
+            }
+            SctpEvent::Closed => {}
+        }
+
         Ok(())
     }
 
@@ -162,7 +192,6 @@ impl SctpManager {
                     anyhow::bail!(anyhow!("remote tsn none."));
                 }
 
-                info!("{:?}", chunk);
                 let sack = SackChunk::new(
                     None,
                     SackChunkValue {
@@ -175,23 +204,19 @@ impl SctpManager {
                 self.send_sctp_chunk(sack.raw, None)?;
                 self.remote_tsn = Some(chunk.value.tsn.wrapping_add(1));
 
-                if let Some(channel_tx) = self.data_channels.get(&chunk.value.stream_id)
-                    && let Err(err) = channel_tx.send(IncomingDataChannelMessage {
+                if let Some(inbound_dc_tx) = &self.inbound_dc_tx {
+                    inbound_dc_tx.send(InternalDataChannelMessage {
+                        stream_id: chunk.value.stream_id,
                         payload_protocol_id: chunk.value.payload_protocol_id,
-                        payload: chunk.value.user_data.clone(),
-                    })
-                {
-                    warn!(
-                        "failed to deliver data channel message; stream_id={}; error={err}",
-                        chunk.value.stream_id
-                    );
+                        user_data: chunk.value.user_data.clone(),
+                    })?;
                 }
             }
             Chunk::Sack(_chunk) => {
                 // TODO: https://datatracker.ietf.org/doc/html/rfc9260#sec_processing_of_received_sack
             }
             Chunk::NotImplemented => {
-                warn!("chunk type not implemented")
+                warn!("not implemented chunk type")
             }
         }
 

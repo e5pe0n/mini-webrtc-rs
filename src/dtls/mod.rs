@@ -10,8 +10,8 @@ use crate::dtls::{
     change_cipher_sec::ChangeCipherSpec, handshake::HandshakeMessage, record_header::ContentType,
 };
 
-use anyhow::{Result, anyhow};
 use crate::common::buffer::BufWriter;
+use anyhow::{Result, anyhow};
 use hmac::digest::{array::Array, consts::U32};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -25,6 +25,11 @@ pub fn is_dtls_packet(data: &[u8]) -> bool {
 pub enum DtlsMessage {
     Handshake(Box<dyn HandshakeMessage>),
     ChangeCipherSpec(ChangeCipherSpec),
+    ApplicationData(ApplicationDataMessage),
+}
+
+pub struct ApplicationDataMessage {
+    payload: Vec<u8>,
 }
 
 impl DtlsMessage {
@@ -32,6 +37,7 @@ impl DtlsMessage {
         match &self {
             DtlsMessage::Handshake(_) => ContentType::Handshake,
             DtlsMessage::ChangeCipherSpec(_) => ContentType::ChangeCipherSpec,
+            DtlsMessage::ApplicationData(_) => ContentType::ApplicationData,
         }
     }
 }
