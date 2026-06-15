@@ -23,7 +23,7 @@ pub fn is_dtls_packet(data: &[u8]) -> bool {
 }
 
 pub enum DtlsMessage {
-    Handshake(Box<dyn HandshakeMessage>),
+    Handshake(Box<dyn HandshakeMessage + Send>),
     ChangeCipherSpec(ChangeCipherSpec),
     ApplicationData(ApplicationDataMessage),
 }

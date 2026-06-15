@@ -16,8 +16,15 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
+
+pub enum UdpServerControlMessage {
+    CreateDataChannel {
+        response_tx: oneshot::Sender<Result<DataChannel>>,
+    },
+}
 
 pub struct UdpServer {
     pub ice_agent: Arc<Mutex<IceAgent>>,
@@ -29,6 +36,8 @@ pub struct UdpServer {
     pub dtls_manager: DtlsManager,
     pub srtp_manager: Option<SrtpManager>,
     pub sctp_manager: SctpManager,
+    control_rx: UnboundedReceiver<UdpServerControlMessage>,
+    pub control_tx: UnboundedSender<UdpServerControlMessage>,
 }
 
 impl UdpServer {
@@ -51,6 +60,7 @@ impl UdpServer {
 
         let (inbound_sctp_tx, inbound_sctp_rx) = mpsc::unbounded_channel();
         let (outbound_sctp_tx, outbound_sctp_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = mpsc::unbounded_channel::<UdpServerControlMessage>();
 
         let dtls_manager = DtlsManager::new(
             inbound_message_rx,
@@ -72,6 +82,8 @@ impl UdpServer {
             dtls_manager,
             srtp_manager: None,
             sctp_manager,
+            control_rx,
+            control_tx,
         })
     }
 
@@ -106,6 +118,11 @@ impl UdpServer {
                 }
                 _ = self.dtls_manager.recv_outbound_sctp() => {}
                 _ = self.sctp_manager.recv() => {}
+                control_message = self.control_rx.recv() => {
+                    if let Some(UdpServerControlMessage::CreateDataChannel { response_tx }) = control_message {
+                        let _ = response_tx.send(self.create_data_channel().await);
+                    }
+                }
             }
         }
     }

@@ -16,7 +16,7 @@ pub mod server_hello;
 pub mod server_hello_done;
 pub mod server_key_exchange;
 
-pub trait HandshakeMessage {
+pub trait HandshakeMessage: Send {
     fn get_handshake_type(&self) -> HandshakeType;
     fn encode(&self, writer: &mut BufWriter);
 }
