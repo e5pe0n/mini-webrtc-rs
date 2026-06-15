@@ -16,6 +16,7 @@ pub struct SrtpEncryptionKeys {
     pub client_master_salt: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub struct SrtpGcm {
     srtp_gcm: Aes128Gcm,
     srtcp_gcm: Aes128Gcm,

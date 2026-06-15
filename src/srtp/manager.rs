@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
+use tokio::{select, sync::mpsc::UnboundedReceiver};
 
 use crate::{
-    common::buffer::BufReader,
+    common::{TransportMessage, buffer::BufReader},
     srtp::{
         SrtpSsrcState,
         crypto::{SrtpEncryptionKeys, SrtpGcm},
@@ -19,20 +20,20 @@ const LIVE_VIDEO_FORWARD_ADDR: &str = "127.0.0.1:5004";
 const LIVE_VIDEO_FORWARD_ENABLED_ENV: &str = "MINI_WEBRTC_LIVE_RTP_FORWARD";
 
 pub struct SrtpManager {
-    gcm: SrtpGcm,
+    gcm: Option<SrtpGcm>,
     ssrc_states: HashMap<u32, SrtpSsrcState>,
     rtp_forward_socket: Option<UdpSocket>,
     rtp_forward_addr: SocketAddr,
     forwarded_rtp_packets: u64,
+    inbound_rtp_rx: UnboundedReceiver<TransportMessage>,
+    encryption_keys_rx: UnboundedReceiver<SrtpEncryptionKeys>,
 }
 
 impl SrtpManager {
-    pub fn new(srtp_encryption_keys: SrtpEncryptionKeys) -> Self {
-        // use client key and salt to decrypt data from client
-        let srtp_gcm = SrtpGcm::new(
-            &srtp_encryption_keys.client_master_key,
-            &srtp_encryption_keys.client_master_salt,
-        );
+    pub fn new(
+        inbound_rtp_rx: UnboundedReceiver<TransportMessage>,
+        encryption_keys_rx: UnboundedReceiver<SrtpEncryptionKeys>,
+    ) -> Self {
         let rtp_forward_addr = LIVE_VIDEO_FORWARD_ADDR
             .parse()
             .expect("invalid LIVE_VIDEO_FORWARD_ADDR");
@@ -60,11 +61,38 @@ impl SrtpManager {
         }
 
         Self {
-            gcm: srtp_gcm,
+            gcm: None,
             ssrc_states: HashMap::new(),
             rtp_forward_socket,
             rtp_forward_addr,
             forwarded_rtp_packets: 0,
+            inbound_rtp_rx,
+            encryption_keys_rx,
+        }
+    }
+
+    pub fn set_encryption_keys(&mut self, srtp_encryption_keys: SrtpEncryptionKeys) {
+        // use client key and salt to decrypt data from client
+        self.gcm = Some(SrtpGcm::new(
+            &srtp_encryption_keys.client_master_key,
+            &srtp_encryption_keys.client_master_salt,
+        ));
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        loop {
+            select! {
+                inbound_srtp = self.inbound_rtp_rx.recv() => {
+                    if let Some(message) = inbound_srtp {
+                        self.handle_rtp_packet(&message.data, message.peer_addr)?;
+                    }
+                }
+                encryption_keys = self.encryption_keys_rx.recv() => {
+                    if let Some(encryption_keys) = encryption_keys {
+                        self.set_encryption_keys(encryption_keys);
+                    }
+                }
+            }
         }
     }
 
@@ -118,7 +146,11 @@ impl SrtpManager {
             ssrc_state.estimate_packet_index(sequence_number)
         };
 
-        let decrypted_packet = self.gcm.decrypt(packet, packet_index.roc)?;
+        let decrypted_packet = self
+            .gcm
+            .clone()
+            .ok_or(anyhow!("failed to decrypt srtp packet; srtp gcm is none."))?
+            .decrypt(packet, packet_index.roc)?;
 
         let ssrc_state = self
             .ssrc_states

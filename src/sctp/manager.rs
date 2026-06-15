@@ -94,43 +94,43 @@ impl SctpManager {
         self.send_sctp_chunk(data_chunk.raw, None)
     }
 
-    pub async fn recv(&mut self) -> Result<()> {
-        enum SctpEvent {
-            InboundSctp(Vec<u8>),
-            OutboundDc(InternalDataChannelMessage),
-            Closed,
-        }
+    pub async fn run(&mut self) -> Result<()> {
+        loop {
+            enum SctpEvent {
+                InboundSctp(Vec<u8>),
+                OutboundDc(InternalDataChannelMessage),
+                Closed,
+            }
 
-        let event = if let Some(outbound_dc_rx) = self.outbound_dc_rx.as_mut() {
-            tokio::select! {
-                inbound_sctp_packet = self.inbound_sctp_rx.recv() => {
-                    inbound_sctp_packet.map(SctpEvent::InboundSctp).unwrap_or(SctpEvent::Closed)
+            let event = if let Some(outbound_dc_rx) = self.outbound_dc_rx.as_mut() {
+                tokio::select! {
+                    inbound_sctp_packet = self.inbound_sctp_rx.recv() => {
+                        inbound_sctp_packet.map(SctpEvent::InboundSctp).unwrap_or(SctpEvent::Closed)
+                    }
+                    outbound_dc_message = outbound_dc_rx.recv() => {
+                        outbound_dc_message.map(SctpEvent::OutboundDc).unwrap_or(SctpEvent::Closed)
+                    }
                 }
-                outbound_dc_message = outbound_dc_rx.recv() => {
-                    outbound_dc_message.map(SctpEvent::OutboundDc).unwrap_or(SctpEvent::Closed)
+            } else {
+                match self.inbound_sctp_rx.recv().await {
+                    Some(packet) => SctpEvent::InboundSctp(packet),
+                    None => SctpEvent::Closed,
                 }
-            }
-        } else {
-            match self.inbound_sctp_rx.recv().await {
-                Some(packet) => SctpEvent::InboundSctp(packet),
-                None => SctpEvent::Closed,
-            }
-        };
+            };
 
-        match event {
-            SctpEvent::InboundSctp(packet) => self.handle_inbound_packet(&packet)?,
-            SctpEvent::OutboundDc(message) => {
-                self.send_data(
-                    message.stream_id,
-                    message.payload_protocol_id,
-                    message.user_data,
-                )
-                .await?
+            match event {
+                SctpEvent::InboundSctp(packet) => self.handle_inbound_packet(&packet)?,
+                SctpEvent::OutboundDc(message) => {
+                    self.send_data(
+                        message.stream_id,
+                        message.payload_protocol_id,
+                        message.user_data,
+                    )
+                    .await?
+                }
+                SctpEvent::Closed => {}
             }
-            SctpEvent::Closed => {}
         }
-
-        Ok(())
     }
 
     fn handle_inbound_packet(&mut self, data: &[u8]) -> Result<()> {

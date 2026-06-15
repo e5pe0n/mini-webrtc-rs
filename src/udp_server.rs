@@ -1,102 +1,47 @@
 use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
-use crate::data_channel::{DataChannel, InternalDataChannelMessage};
-use crate::dtls::manager::DtlsManager;
-use crate::dtls::{DtlsState, Fingerprint, is_dtls_packet};
+use crate::dtls::is_dtls_packet;
 use crate::ice::IceAgent;
-use crate::sctp::manager::SctpManager;
-use crate::srtp::{SrtpManager, is_rtcp_packet, is_rtp_packet};
+use crate::srtp::{is_rtcp_packet, is_rtp_packet};
 use crate::stun::{
     AttributeType, IpFamily, MAGIC_COOKIE, StunMessage, StunMessageBuilder, StunMessageClass,
     StunMessageMethod, StunMessageType,
 };
 use anyhow::{Result, anyhow};
-use rcgen::{CertifiedKey, KeyPair};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
-use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
-
-pub enum UdpServerControlMessage {
-    CreateDataChannel {
-        response_tx: oneshot::Sender<Result<DataChannel>>,
-    },
-}
 
 pub struct UdpServer {
     pub ice_agent: Arc<Mutex<IceAgent>>,
     pub socket: Arc<UdpSocket>,
-    pub inbound_message_tx: UnboundedSender<TransportMessage>,
-    pub outbound_message_rx: UnboundedReceiver<TransportMessage>,
-    pub inbound_dtls_tx: UnboundedSender<TransportMessage>,
-    pub inbound_dtls_rx: UnboundedReceiver<TransportMessage>,
-    pub dtls_manager: DtlsManager,
-    pub srtp_manager: Option<SrtpManager>,
-    pub sctp_manager: SctpManager,
-    control_rx: UnboundedReceiver<UdpServerControlMessage>,
-    pub control_tx: UnboundedSender<UdpServerControlMessage>,
+    inbound_dtls_tx: UnboundedSender<TransportMessage>,
+    outbound_dtls_rx: UnboundedReceiver<TransportMessage>,
+    inbound_rtp_tx: UnboundedSender<TransportMessage>,
 }
 
 impl UdpServer {
     pub async fn new(
         addr: &str,
-        certified_key: CertifiedKey<KeyPair>,
-        fingerprint: Fingerprint,
         ice_agent: Arc<Mutex<IceAgent>>,
+        inbound_dtls_tx: UnboundedSender<TransportMessage>,
+        outbound_dtls_rx: UnboundedReceiver<TransportMessage>,
+        inbound_rtp_tx: UnboundedSender<TransportMessage>,
     ) -> Result<Self> {
         // Bind UDP socket
         let socket = Arc::new(UdpSocket::bind(addr).await?);
         info!("Udp Server listening on {}", addr);
 
-        let (inbound_message_tx, inbound_message_rx) =
-            mpsc::unbounded_channel::<TransportMessage>();
-        let (outbound_message_tx, outbound_message_rx) =
-            mpsc::unbounded_channel::<TransportMessage>();
-
-        let (inbound_dtls_tx, inbound_dtls_rx) = mpsc::unbounded_channel::<TransportMessage>();
-
-        let (inbound_sctp_tx, inbound_sctp_rx) = mpsc::unbounded_channel();
-        let (outbound_sctp_tx, outbound_sctp_rx) = mpsc::unbounded_channel();
-        let (control_tx, control_rx) = mpsc::unbounded_channel::<UdpServerControlMessage>();
-
-        let dtls_manager = DtlsManager::new(
-            inbound_message_rx,
-            outbound_message_tx,
-            certified_key,
-            fingerprint,
-            inbound_sctp_tx,
-            outbound_sctp_rx,
-        );
-        let sctp_manager = SctpManager::new(outbound_sctp_tx, inbound_sctp_rx);
-
         Ok(UdpServer {
             ice_agent,
             socket,
-            inbound_message_tx,
-            outbound_message_rx,
             inbound_dtls_tx,
-            inbound_dtls_rx,
-            dtls_manager,
-            srtp_manager: None,
-            sctp_manager,
-            control_rx,
-            control_tx,
+            outbound_dtls_rx,
+            inbound_rtp_tx,
         })
-    }
-
-    pub async fn create_data_channel(&mut self) -> Result<DataChannel> {
-        let (inbound_dc_tx, inbound_dc_rx) =
-            mpsc::unbounded_channel::<InternalDataChannelMessage>();
-        let (outbound_dc_tx, outbound_dc_rx) =
-            mpsc::unbounded_channel::<InternalDataChannelMessage>();
-
-        self.sctp_manager
-            .set_data_channel_transport(inbound_dc_tx, outbound_dc_rx);
-
-        Ok(DataChannel::new(0, inbound_dc_rx, outbound_dc_tx).await)
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -104,28 +49,49 @@ impl UdpServer {
 
         loop {
             tokio::select! {
-                recv_result = self.socket.recv_from(&mut buf) => {
-                    let (len, peer_addr) = recv_result?;
+                inbound_message = self.socket.recv_from(&mut buf) => {
+                    let (len, peer_addr) = inbound_message?;
                     debug!("Received {} bytes from {}", len, peer_addr);
 
                     self.handle_inbound_message(&buf[..len], peer_addr).await?;
                 }
-                outbound_message = self.outbound_message_rx.recv() => {
+                outbound_message = self.outbound_dtls_rx.recv() => {
                     if let Some(message) = outbound_message {
                         self.socket.send_to(&message.data, message.peer_addr).await?;
                         debug!("Sent {} bytes to {}", &message.data.len(), message.peer_addr);
                     }
                 }
-                _ = self.dtls_manager.recv_outbound_sctp() => {}
-                _ = self.sctp_manager.recv() => {}
-                control_message = self.control_rx.recv() => {
-                    if let Some(UdpServerControlMessage::CreateDataChannel { response_tx }) = control_message {
-                        let _ = response_tx.send(self.create_data_channel().await);
-                    }
-                }
             }
         }
     }
+
+    // pub async fn run(&mut self) -> Result<()> {
+    //     let mut buf = vec![0u8; 65535];
+
+    //     loop {
+    //         tokio::select! {
+    //             recv_result = self.socket.recv_from(&mut buf) => {
+    //                 let (len, peer_addr) = recv_result?;
+    //                 debug!("Received {} bytes from {}", len, peer_addr);
+
+    //                 self.handle_inbound_message(&buf[..len], peer_addr).await?;
+    //             }
+    //             outbound_message = self.outbound_message_rx.recv() => {
+    //                 if let Some(message) = outbound_message {
+    //                     self.socket.send_to(&message.data, message.peer_addr).await?;
+    //                     debug!("Sent {} bytes to {}", &message.data.len(), message.peer_addr);
+    //                 }
+    //             }
+    //             _ = self.dtls_manager.recv_outbound_sctp() => {}
+    //             _ = self.sctp_manager.recv() => {}
+    //             control_message = self.control_rx.recv() => {
+    //                 if let Some(UdpServerControlMessage::CreateDataChannel { response_tx }) = control_message {
+    //                     let _ = response_tx.send(self.create_data_channel().await);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     async fn handle_inbound_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         if data.is_empty() {
@@ -139,28 +105,36 @@ impl UdpServer {
 
         if is_dtls_packet(data) {
             debug!("dtls packet received");
-            if let Err(err) = self.dtls_manager.handle_dtls_packet(data, peer_addr).await {
-                if matches!(self.dtls_manager.state, DtlsState::Connected) {
-                    warn!(
-                        "ignored dtls packet parse error after connected; peer={peer_addr}; error={err:#}"
-                    );
-                    return Ok(());
-                }
-                return Err(err);
-            }
-            if self.srtp_manager.is_none()
-                && matches!(self.dtls_manager.state, DtlsState::Connected)
-            {
-                let srtp_encryption_keys = self.dtls_manager.export_keying_material()?;
-                self.srtp_manager = Some(SrtpManager::new(srtp_encryption_keys));
-                info!("srtp manager initialized after dtls connected");
-            }
+            self.inbound_dtls_tx.send(TransportMessage {
+                peer_addr,
+                data: data.to_vec(),
+            });
+            // if let Err(err) = self.dtls_manager.handle_dtls_packet(data, peer_addr).await {
+            //     if matches!(self.dtls_manager.state, DtlsState::Connected) {
+            //         warn!(
+            //             "ignored dtls packet parse error after connected; peer={peer_addr}; error={err:#}"
+            //         );
+            //         return Ok(());
+            //     }
+            //     return Err(err);
+            // }
+            // if self.srtp_manager.is_none()
+            //     && matches!(self.dtls_manager.state, DtlsState::Connected)
+            // {
+            //     let srtp_encryption_keys = self.dtls_manager.export_keying_material()?;
+            //     self.srtp_manager = Some(SrtpManager::new(srtp_encryption_keys));
+            //     info!("srtp manager initialized after dtls connected");
+            // }
             return Ok(());
         }
 
         if is_rtp_packet(data) {
             debug!("rtp packet received");
-            return self.handle_rtp_packet(data, peer_addr).await;
+            self.inbound_rtp_tx.send(TransportMessage {
+                peer_addr,
+                data: data.to_vec(),
+            });
+            return Ok(());
         }
 
         if is_rtcp_packet(data) {
@@ -182,19 +156,19 @@ impl UdpServer {
         Ok(())
     }
 
-    async fn handle_rtp_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
-        if let Some(srtp_manager) = self.srtp_manager.as_mut() {
-            if let Err(err) = srtp_manager.handle_rtp_packet(data, peer_addr) {
-                warn!(
-                    "failed to handle RTP/SRTP packet; peer={peer_addr}; len={}; error={err:#}",
-                    data.len()
-                );
-            }
-        } else {
-            warn!("received RTP packet before SRTP is ready; peer={peer_addr}");
-        }
-        Ok(())
-    }
+    // async fn handle_rtp_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+    //     if let Some(srtp_manager) = self.srtp_manager.as_mut() {
+    //         if let Err(err) = srtp_manager.handle_rtp_packet(data, peer_addr) {
+    //             warn!(
+    //                 "failed to handle RTP/SRTP packet; peer={peer_addr}; len={}; error={err:#}",
+    //                 data.len()
+    //             );
+    //         }
+    //     } else {
+    //         warn!("received RTP packet before SRTP is ready; peer={peer_addr}");
+    //     }
+    //     Ok(())
+    // }
 
     async fn handle_stun_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         // respond to stun binding request of ice

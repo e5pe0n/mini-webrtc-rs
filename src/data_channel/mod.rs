@@ -29,7 +29,7 @@ pub struct DataChannel {
 }
 
 impl DataChannel {
-    pub async fn new(
+    pub fn new(
         stream_id: u16,
         inbound_dc_rx: mpsc::UnboundedReceiver<InternalDataChannelMessage>,
         outbound_dc_tx: mpsc::UnboundedSender<InternalDataChannelMessage>,
