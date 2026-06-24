@@ -1,9 +1,12 @@
+use std::collections::VecDeque;
+use std::sync::Arc;
 use std::{collections::HashMap, net::SocketAddr};
 
 use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::ApplicationDataMessage;
 use crate::dtls::DtlsMessage::ApplicationData;
+use crate::event_loop::InternalEvent::{self, OutboundDtlsPacket};
 use crate::srtp::crypto::{SrtpEncryptionKeys, generate_keying_material};
 use anyhow::{Context, Result, anyhow};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -11,8 +14,7 @@ use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use rcgen::{CertifiedKey, KeyPair};
 use sha2::{Digest, Sha256};
-use tokio::select;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
@@ -100,11 +102,6 @@ impl PlainHandshakeMessage {
 }
 
 pub struct DtlsManager {
-    inbound_dtls_rx: UnboundedReceiver<TransportMessage>,
-    encryption_keys_tx: UnboundedSender<SrtpEncryptionKeys>,
-    outbound_dtls_tx: UnboundedSender<TransportMessage>,
-    inbound_sctp_tx: UnboundedSender<Vec<u8>>,
-    outbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
     pub certified_key: CertifiedKey<KeyPair>,
     pub fingerprint: Fingerprint,
     pub state: DtlsState,
@@ -129,26 +126,18 @@ pub struct DtlsManager {
     pub client_certificate: Option<Vec<u8>>,
     pub gcm: Option<Gcm>,
     peer_addr: Option<SocketAddr>,
+    event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
 }
 
 impl DtlsManager {
     pub fn new(
         certified_key: CertifiedKey<KeyPair>,
         fingerprint: Fingerprint,
-        inbound_dtls_rx: UnboundedReceiver<TransportMessage>,
-        outbound_dtls_tx: UnboundedSender<TransportMessage>,
-        inbound_sctp_tx: UnboundedSender<Vec<u8>>,
-        outbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
-        encryption_keys_tx: UnboundedSender<SrtpEncryptionKeys>,
+        event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
     ) -> Self {
         Self {
             certified_key,
             fingerprint,
-            inbound_dtls_rx,
-            outbound_dtls_tx,
-            inbound_sctp_tx,
-            outbound_sctp_rx,
-            encryption_keys_tx,
             state: DtlsState::New,
             handshake_flight: HandshakeFlight::Flight0,
             epoch: 0,
@@ -171,40 +160,7 @@ impl DtlsManager {
             client_certificate: None,
             gcm: None,
             peer_addr: None,
-        }
-    }
-
-    pub async fn run(&mut self) -> Result<()> {
-        loop {
-            select! {
-                inbound_dtls = self.inbound_dtls_rx.recv() => {
-                    if let Some(message) = inbound_dtls {
-                        self.handle_dtls_packet(&message.data, message.peer_addr)
-                            .await?;
-                        match self.state {
-                            DtlsState::Connected => {
-                                self.encryption_keys_tx.send(self.export_keying_material()?);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                outbound_sctp = self.outbound_sctp_rx.recv() => {
-                    if let Some(outbound_sctp) = outbound_sctp {
-                        match self.state {
-                            DtlsState::Connected => {
-                                self.send_application_data(&outbound_sctp).await?;
-                            }
-                            _ => {
-                                warn!(
-                                    "drop outbound sctp data before dtls connected; len={}",
-                                    outbound_sctp.len()
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+            event_queue,
         }
     }
 
@@ -258,7 +214,13 @@ impl DtlsManager {
                     };
 
                     // assuming all coming application data are sctp packets
-                    self.inbound_sctp_tx.send(payload)?;
+                    self.event_queue
+                        .lock()
+                        .await
+                        .push_back(InternalEvent::InboundSctpPacket(TransportMessage {
+                            peer_addr,
+                            data: payload,
+                        }));
                 }
                 ContentType::Handshake => {
                     debug!("Received Handshake from {}", peer_addr);
@@ -696,10 +658,13 @@ impl DtlsManager {
         record_header.encode(&mut writer);
         writer.write_bytes(&encoded_message);
 
-        self.outbound_dtls_tx.send(TransportMessage {
-            peer_addr,
-            data: writer.buf(),
-        })?;
+        self.event_queue
+            .lock()
+            .await
+            .push_back(OutboundDtlsPacket(TransportMessage {
+                peer_addr,
+                data: writer.buf(),
+            }));
 
         self.sequence_number += 1;
         Ok(())

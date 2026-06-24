@@ -2,6 +2,7 @@ use crate::common::TransportMessage;
 use crate::data_channel::{DataChannel, InternalDataChannelMessage};
 use crate::dtls::Fingerprint;
 use crate::dtls::manager::DtlsManager;
+use crate::event_loop::InternalEvent;
 use crate::sctp::manager::SctpManager;
 use crate::srtp::SrtpManager;
 use crate::srtp::crypto::SrtpEncryptionKeys;
@@ -14,9 +15,10 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use local_ip_address::local_ip;
 use rcgen::generate_simple_self_signed;
+use std::collections::VecDeque;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
-use tokio::sync::oneshot;
+use tokio::select;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -76,51 +78,43 @@ impl PeerConnection {
             fingerprint.clone(),
         )));
 
-        let (inbound_dtls_tx, inbound_dtls_rx) = mpsc::unbounded_channel::<TransportMessage>();
-        let (outbound_dtls_tx, outbound_dtls_rx) = mpsc::unbounded_channel::<TransportMessage>();
+        let event_queue = Arc::new(Mutex::new(VecDeque::new()));
 
-        let (inbound_rtp_tx, inbound_rtp_rx) = mpsc::unbounded_channel::<TransportMessage>();
-        let (encryption_keys_tx, encryption_keys_rx) =
-            mpsc::unbounded_channel::<SrtpEncryptionKeys>();
-
-        let (inbound_sctp_tx, inbound_sctp_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let (outbound_sctp_tx, outbound_sctp_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-
-        let mut dtls_manager = DtlsManager::new(
-            // inbound_message_rx,
-            // outbound_message_tx,
-            certified_key,
-            fingerprint,
-            inbound_dtls_rx,
-            outbound_dtls_tx,
-            inbound_sctp_tx,
-            outbound_sctp_rx,
-            encryption_keys_tx,
-        );
-        let mut srtp_manager = SrtpManager::new(inbound_rtp_rx, encryption_keys_rx);
-        let sctp_manager = SctpManager::new(outbound_sctp_tx, inbound_sctp_rx);
+        let dtls_manager = DtlsManager::new(certified_key, fingerprint, event_queue.clone());
+        let srtp_manager = SrtpManager::new(event_queue.clone());
+        let sctp_manager = SctpManager::new(event_queue.clone());
         let sctp_manager = Arc::new(Mutex::new(sctp_manager));
         let sctp_manager_clone = sctp_manager.clone();
 
         let udp_server = UdpServer::new(
             &format!("0.0.0.0:{UDP_SERVER_PORT}"),
             ice_agent.clone(),
-            inbound_dtls_tx,
-            outbound_dtls_rx,
-            inbound_rtp_tx,
+            event_queue.clone(),
         )
         .await
         .context("init udp server")?;
-        let signaling_server = SignalingServer::new(ice_agent).await;
 
-        let udp_server_handle = tokio::spawn(async move {
-            let mut udp_server = udp_server;
-            udp_server.run().await
+        let event_loop_handler = tokio::spawn(async move {
+            loop {
+                while let Some(event) = event_queue.lock().await.pop_front() {
+                    match event {
+                        InternalEvent::InboundDtlsPacket(TransportMessage { peer_addr, data }) => {
+                            dtls_manager
+                                .handle_dtls_packet(&data, peer_addr)
+                                .await
+                                .inspect_err(|err| warn!("{err:?}"));
+                        }
+                        _ => {}
+                    }
+                }
+
+                select! {
+                    _ = udp_server.recv() => {}
+                }
+            }
         });
-        let dtls_manager_handle = tokio::spawn(async move { dtls_manager.run().await });
-        let srtp_manager_handle = tokio::spawn(async move { srtp_manager.run().await });
-        let sctp_manager_handle =
-            tokio::spawn(async move { sctp_manager_clone.lock().await.run().await });
+
+        let signaling_server = SignalingServer::new(ice_agent).await;
         let signaling_server_handle = tokio::spawn(async move { signaling_server.run().await });
 
         Ok(Self {

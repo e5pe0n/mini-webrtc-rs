@@ -1,13 +1,22 @@
-use std::{collections::HashMap, u16};
+use std::{
+    collections::{HashMap, VecDeque},
+    net::SocketAddr,
+    sync::Arc,
+    u16,
+};
 
 use anyhow::{Result, anyhow};
 use rand::{RngExt, random};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::{
+    Mutex,
+    mpsc::{UnboundedReceiver, UnboundedSender},
+};
 use tracing::{debug, info, warn};
 
 use crate::{
-    common::buffer::BufReader,
+    common::{TransportMessage, buffer::BufReader},
     data_channel::InternalDataChannelMessage,
+    event_loop::InternalEvent,
     sctp::{
         chunk::{
             COOKIE_LENGTH_IN_BYTES, Chunk, ChunkParam,
@@ -21,8 +30,6 @@ use crate::{
 };
 
 pub struct SctpManager {
-    inbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
-    outbound_sctp_tx: UnboundedSender<Vec<u8>>,
     inbound_dc_tx: Option<UnboundedSender<InternalDataChannelMessage>>,
     outbound_dc_rx: Option<UnboundedReceiver<InternalDataChannelMessage>>,
     local_a_rwnd: u32,
@@ -36,16 +43,13 @@ pub struct SctpManager {
     local_port: Option<u16>,
     remote_port: Option<u16>,
     stream_seq_nums: HashMap<u16, u16>,
+    event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
+    peer_addr: Option<SocketAddr>,
 }
 
 impl SctpManager {
-    pub fn new(
-        outbound_sctp_tx: UnboundedSender<Vec<u8>>,
-        inbound_sctp_rx: UnboundedReceiver<Vec<u8>>,
-    ) -> Self {
+    pub fn new(event_queue: Arc<Mutex<VecDeque<InternalEvent>>>) -> Self {
         Self {
-            outbound_sctp_tx,
-            inbound_sctp_rx,
             inbound_dc_tx: None,
             outbound_dc_rx: None,
             local_a_rwnd: 1024 * 1024,
@@ -59,6 +63,8 @@ impl SctpManager {
             local_port: None,
             remote_port: None,
             stream_seq_nums: HashMap::new(),
+            event_queue,
+            peer_addr: None,
         }
     }
 
@@ -77,63 +83,29 @@ impl SctpManager {
         payload_protocol_id: u32,
         user_data: Vec<u8>,
     ) -> Result<()> {
-        let stream_seq_num = self.stream_seq_nums.entry(stream_id).or_insert(0);
-        let data_chunk = DataChunk::new(
-            None,
-            DataChunkValue {
-                tsn: self.local_tsn,
-                stream_id,
-                stream_seq_num: *stream_seq_num,
-                payload_protocol_id,
-                user_data,
-            },
-        );
+        match self.peer_addr {
+            Some(peer_addr) => {
+                let stream_seq_num = self.stream_seq_nums.entry(stream_id).or_insert(0);
+                let data_chunk = DataChunk::new(
+                    None,
+                    DataChunkValue {
+                        tsn: self.local_tsn,
+                        stream_id,
+                        stream_seq_num: *stream_seq_num,
+                        payload_protocol_id,
+                        user_data,
+                    },
+                );
 
-        *stream_seq_num = stream_seq_num.wrapping_add(1);
-        self.local_tsn = self.local_tsn.wrapping_add(1);
-        self.send_sctp_chunk(data_chunk.raw, None)
-    }
-
-    pub async fn run(&mut self) -> Result<()> {
-        loop {
-            enum SctpEvent {
-                InboundSctp(Vec<u8>),
-                OutboundDc(InternalDataChannelMessage),
-                Closed,
+                *stream_seq_num = stream_seq_num.wrapping_add(1);
+                self.local_tsn = self.local_tsn.wrapping_add(1);
+                self.send_sctp_chunk(data_chunk.raw, None, peer_addr).await
             }
-
-            let event = if let Some(outbound_dc_rx) = self.outbound_dc_rx.as_mut() {
-                tokio::select! {
-                    inbound_sctp_packet = self.inbound_sctp_rx.recv() => {
-                        inbound_sctp_packet.map(SctpEvent::InboundSctp).unwrap_or(SctpEvent::Closed)
-                    }
-                    outbound_dc_message = outbound_dc_rx.recv() => {
-                        outbound_dc_message.map(SctpEvent::OutboundDc).unwrap_or(SctpEvent::Closed)
-                    }
-                }
-            } else {
-                match self.inbound_sctp_rx.recv().await {
-                    Some(packet) => SctpEvent::InboundSctp(packet),
-                    None => SctpEvent::Closed,
-                }
-            };
-
-            match event {
-                SctpEvent::InboundSctp(packet) => self.handle_inbound_packet(&packet)?,
-                SctpEvent::OutboundDc(message) => {
-                    self.send_data(
-                        message.stream_id,
-                        message.payload_protocol_id,
-                        message.user_data,
-                    )
-                    .await?
-                }
-                SctpEvent::Closed => {}
-            }
+            None => Err(anyhow!("data channel not established.")),
         }
     }
 
-    fn handle_inbound_packet(&mut self, data: &[u8]) -> Result<()> {
+    async fn handle_inbound_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         let mut reader = BufReader::new(data);
         let packet = SctpPacket::decode(&mut reader)?;
         info!("received sctp packet: {:?}", packet);
@@ -170,7 +142,8 @@ impl SctpManager {
                     params: vec![ChunkParam::StateCookie(cookie.clone())],
                 });
 
-                self.send_sctp_chunk(init_ack.raw, Some(chunk.value.init_tag))?;
+                self.send_sctp_chunk(init_ack.raw, Some(chunk.value.init_tag), peer_addr)
+                    .await?;
                 self.cookie = Some(cookie);
                 self.remote_tsn = Some(chunk.value.init_tsn.wrapping_sub(1));
             }
@@ -183,7 +156,8 @@ impl SctpManager {
                         anyhow::bail!(anyhow!("invalid cookie."));
                     }
                     let cookie_ack = CookieAckChunk::new();
-                    self.send_sctp_chunk(cookie_ack.raw, None)?;
+                    self.send_sctp_chunk(cookie_ack.raw, None, peer_addr)
+                        .await?;
                 }
             },
             Chunk::Data(chunk) => {
@@ -201,7 +175,7 @@ impl SctpManager {
                         dup_tsns: vec![],
                     },
                 );
-                self.send_sctp_chunk(sack.raw, None)?;
+                self.send_sctp_chunk(sack.raw, None, peer_addr).await?;
                 self.remote_tsn = Some(chunk.value.tsn.wrapping_add(1));
 
                 if let Some(inbound_dc_tx) = &self.inbound_dc_tx {
@@ -223,7 +197,12 @@ impl SctpManager {
         Ok(())
     }
 
-    fn send_sctp_chunk(&self, chunk_raw: Vec<u8>, verification_tag: Option<u32>) -> Result<()> {
+    async fn send_sctp_chunk(
+        &self,
+        chunk_raw: Vec<u8>,
+        verification_tag: Option<u32>,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
         let src_port = self
             .local_port
             .ok_or(anyhow!("sctp local port is not initialized yet."))?;
@@ -236,7 +215,13 @@ impl SctpManager {
 
         let packet =
             SctpPacket::encode_single_chunk(src_port, dst_port, verification_tag, &chunk_raw);
-        self.outbound_sctp_tx.send(packet)?;
+        self.event_queue
+            .lock()
+            .await
+            .push_back(InternalEvent::OutboundSctpPacket(TransportMessage {
+                peer_addr,
+                data: packet,
+            }));
         Ok(())
     }
 }

@@ -1,6 +1,7 @@
 pub mod common;
 pub mod data_channel;
 pub mod dtls;
+pub mod event_loop;
 pub mod ice;
 pub mod peer_connection;
 pub mod sctp;

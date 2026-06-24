@@ -1,6 +1,7 @@
 use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::is_dtls_packet;
+use crate::event_loop::{EventQueue, InternalEvent};
 use crate::ice::IceAgent;
 use crate::srtp::{is_rtcp_packet, is_rtp_packet};
 use crate::stun::{
@@ -12,24 +13,19 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, warn};
 
 pub struct UdpServer {
     pub ice_agent: Arc<Mutex<IceAgent>>,
     pub socket: Arc<UdpSocket>,
-    inbound_dtls_tx: UnboundedSender<TransportMessage>,
-    outbound_dtls_rx: UnboundedReceiver<TransportMessage>,
-    inbound_rtp_tx: UnboundedSender<TransportMessage>,
+    event_queue: Arc<Mutex<EventQueue>>,
 }
 
 impl UdpServer {
     pub async fn new(
         addr: &str,
         ice_agent: Arc<Mutex<IceAgent>>,
-        inbound_dtls_tx: UnboundedSender<TransportMessage>,
-        outbound_dtls_rx: UnboundedReceiver<TransportMessage>,
-        inbound_rtp_tx: UnboundedSender<TransportMessage>,
+        event_queue: Arc<Mutex<EventQueue>>,
     ) -> Result<Self> {
         // Bind UDP socket
         let socket = Arc::new(UdpSocket::bind(addr).await?);
@@ -38,32 +34,39 @@ impl UdpServer {
         Ok(UdpServer {
             ice_agent,
             socket,
-            inbound_dtls_tx,
-            outbound_dtls_rx,
-            inbound_rtp_tx,
+            event_queue,
         })
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn recv(&mut self) -> Result<()> {
         let mut buf = vec![0u8; 65535];
 
-        loop {
-            tokio::select! {
-                inbound_message = self.socket.recv_from(&mut buf) => {
-                    let (len, peer_addr) = inbound_message?;
-                    debug!("Received {} bytes from {}", len, peer_addr);
+        let (len, peer_addr) = self.socket.recv_from(&mut buf).await?;
+        debug!("Received {} bytes from {}", len, peer_addr);
 
-                    self.handle_inbound_message(&buf[..len], peer_addr).await?;
-                }
-                outbound_message = self.outbound_dtls_rx.recv() => {
-                    if let Some(message) = outbound_message {
-                        self.socket.send_to(&message.data, message.peer_addr).await?;
-                        debug!("Sent {} bytes to {}", &message.data.len(), message.peer_addr);
-                    }
-                }
-            }
-        }
+        self.handle_inbound_message(&buf[..len], peer_addr).await
     }
+
+    // pub async fn run(&mut self) -> Result<()> {
+    //     let mut buf = vec![0u8; 65535];
+
+    //     loop {
+    //         tokio::select! {
+    //             inbound_message = self.socket.recv_from(&mut buf) => {
+    //                 let (len, peer_addr) = inbound_message?;
+    //                 debug!("Received {} bytes from {}", len, peer_addr);
+
+    //                 self.handle_inbound_message(&buf[..len], peer_addr).await?;
+    //             }
+    //             outbound_message = self.outbound_dtls_rx.recv() => {
+    //                 if let Some(message) = outbound_message {
+    //                     self.socket.send_to(&message.data, message.peer_addr).await?;
+    //                     debug!("Sent {} bytes to {}", &message.data.len(), message.peer_addr);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     // pub async fn run(&mut self) -> Result<()> {
     //     let mut buf = vec![0u8; 65535];
@@ -105,10 +108,13 @@ impl UdpServer {
 
         if is_dtls_packet(data) {
             debug!("dtls packet received");
-            self.inbound_dtls_tx.send(TransportMessage {
-                peer_addr,
-                data: data.to_vec(),
-            });
+            self.event_queue
+                .lock()
+                .await
+                .push_back(InternalEvent::InboundDtlsPacket(TransportMessage {
+                    peer_addr,
+                    data: data.to_vec(),
+                }));
             // if let Err(err) = self.dtls_manager.handle_dtls_packet(data, peer_addr).await {
             //     if matches!(self.dtls_manager.state, DtlsState::Connected) {
             //         warn!(
@@ -130,10 +136,13 @@ impl UdpServer {
 
         if is_rtp_packet(data) {
             debug!("rtp packet received");
-            self.inbound_rtp_tx.send(TransportMessage {
-                peer_addr,
-                data: data.to_vec(),
-            });
+            self.event_queue
+                .lock()
+                .await
+                .push_back(InternalEvent::InboundRtpPacket(TransportMessage {
+                    peer_addr,
+                    data: data.to_vec(),
+                }));
             return Ok(());
         }
 

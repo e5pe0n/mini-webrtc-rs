@@ -1,8 +1,9 @@
 use anyhow::{Result, anyhow};
-use tokio::{select, sync::mpsc::UnboundedReceiver};
+use tokio::sync::Mutex;
 
 use crate::{
-    common::{TransportMessage, buffer::BufReader},
+    common::buffer::BufReader,
+    event_loop::InternalEvent,
     srtp::{
         SrtpSsrcState,
         crypto::{SrtpEncryptionKeys, SrtpGcm},
@@ -10,9 +11,10 @@ use crate::{
     },
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
     net::{SocketAddr, UdpSocket},
+    sync::Arc,
 };
 use tracing::{info, warn};
 
@@ -25,15 +27,11 @@ pub struct SrtpManager {
     rtp_forward_socket: Option<UdpSocket>,
     rtp_forward_addr: SocketAddr,
     forwarded_rtp_packets: u64,
-    inbound_rtp_rx: UnboundedReceiver<TransportMessage>,
-    encryption_keys_rx: UnboundedReceiver<SrtpEncryptionKeys>,
+    event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
 }
 
 impl SrtpManager {
-    pub fn new(
-        inbound_rtp_rx: UnboundedReceiver<TransportMessage>,
-        encryption_keys_rx: UnboundedReceiver<SrtpEncryptionKeys>,
-    ) -> Self {
+    pub fn new(event_queue: Arc<Mutex<VecDeque<InternalEvent>>>) -> Self {
         let rtp_forward_addr = LIVE_VIDEO_FORWARD_ADDR
             .parse()
             .expect("invalid LIVE_VIDEO_FORWARD_ADDR");
@@ -66,8 +64,7 @@ impl SrtpManager {
             rtp_forward_socket,
             rtp_forward_addr,
             forwarded_rtp_packets: 0,
-            inbound_rtp_rx,
-            encryption_keys_rx,
+            event_queue,
         }
     }
 
@@ -77,23 +74,6 @@ impl SrtpManager {
             &srtp_encryption_keys.client_master_key,
             &srtp_encryption_keys.client_master_salt,
         ));
-    }
-
-    pub async fn run(&mut self) -> Result<()> {
-        loop {
-            select! {
-                inbound_srtp = self.inbound_rtp_rx.recv() => {
-                    if let Some(message) = inbound_srtp {
-                        self.handle_rtp_packet(&message.data, message.peer_addr)?;
-                    }
-                }
-                encryption_keys = self.encryption_keys_rx.recv() => {
-                    if let Some(encryption_keys) = encryption_keys {
-                        self.set_encryption_keys(encryption_keys);
-                    }
-                }
-            }
-        }
     }
 
     pub fn handle_rtp_packet(&mut self, data: &[u8], _peer_addr: SocketAddr) -> Result<()> {
