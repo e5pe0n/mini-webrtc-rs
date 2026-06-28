@@ -1,6 +1,12 @@
 import { useRef, useState } from "react";
 import * as sdpTransform from "sdp-transform";
 
+function isValidIPv4(ip: string) {
+  const ipv4Regex =
+    /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  return ipv4Regex.test(ip);
+}
+
 const rtcConfig: RTCConfiguration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -69,12 +75,14 @@ async function sendSdpAnswer(
         fingerprintType: m.fingerprint!.type as FingerprintType,
         fingerprintHash: m.fingerprint!.hash,
         candidates:
-          m.candidates?.map((c) => ({
-            ip: c.ip,
-            port: c.port,
-            candidateType: "host" as CandidateType,
-            transportType: c.transport as TransportType,
-          })) ?? [],
+          m.candidates
+            ?.filter((c) => isValidIPv4(c.ip))
+            .map((c) => ({
+              ip: c.ip,
+              port: c.port,
+              candidateType: "host" as CandidateType,
+              transportType: c.transport as TransportType,
+            })) ?? [],
         payloads: "",
         rtpCodec: "",
       })) ?? [],
@@ -132,10 +140,15 @@ async function waitForIceGatheringComplete(
 function App() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const dcRef = useRef<RTCDataChannel | null>(null);
   const statsTimerRef = useRef<number | null>(null);
   const [iceCandidates, setIceCandidates] = useState<RTCIceCandidate[]>([]);
+  const [pcReady, setPcReady] = useState(false);
+  const [dcReady, setDcReady] = useState(false);
+  const [dcMessage, setDcMessage] = useState("");
+  const [dcLog, setDcLog] = useState<string[]>([]);
 
-  const handleStartMedia = async () => {
+  const handleCreatePc = async () => {
     if (statsTimerRef.current !== null) {
       window.clearInterval(statsTimerRef.current);
       statsTimerRef.current = null;
@@ -144,14 +157,11 @@ function App() {
       pcRef.current.close();
       pcRef.current = null;
     }
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false,
-    });
-
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
+    setPcReady(false);
+    setDcReady(false);
+    if (dcRef.current) {
+      dcRef.current.close();
+      dcRef.current = null;
     }
 
     const pc = new RTCPeerConnection(rtcConfig);
@@ -223,11 +233,6 @@ function App() {
       sdp: offerStr,
     });
 
-    const videoTrack = stream.getVideoTracks()[0] ?? null;
-    if (!videoTrack) {
-      throw new Error("missing local video track");
-    }
-
     const offeredVideoTransceiver = pc.getTransceivers().find((transceiver) => {
       if (transceiver.mid && transceiver.mid === offer.medias[0]?.mediaId) {
         return true;
@@ -240,8 +245,6 @@ function App() {
     }
 
     offeredVideoTransceiver.direction = "sendonly";
-    await offeredVideoTransceiver.sender.replaceTrack(videoTrack);
-    offeredVideoTransceiver.sender.setStreams(stream);
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -322,6 +325,77 @@ function App() {
         }
       }
     }, 2000);
+
+    // create data channel
+    const dc = pc.createDataChannel("data");
+    dcRef.current = dc;
+    dc.onopen = () => {
+      console.log("data channel opened");
+      setDcReady(true);
+      setDcLog((prev) => [...prev, "[system] data channel opened"]);
+    };
+    dc.onclose = () => {
+      console.log("data channel closed");
+      setDcReady(false);
+      setDcLog((prev) => [...prev, "[system] data channel closed"]);
+    };
+    dc.onmessage = (ev) => {
+      console.log("data channel message", ev.data);
+      setDcLog((prev) => [...prev, `[recv] ${ev.data}`]);
+    };
+    dc.onerror = (ev) => {
+      console.error("data channel error", ev);
+      setDcLog((prev) => [...prev, `[error] ${ev}`]);
+    };
+
+    setPcReady(true);
+  };
+
+  const handleStartMedia = async () => {
+    const pc = pcRef.current;
+    if (!pc) {
+      throw new Error("peer connection is not created yet");
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false,
+    });
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
+    }
+
+    const offeredVideoTransceiver = pc.getTransceivers().find((transceiver) => {
+      return transceiver.receiver.track.kind === "video";
+    });
+
+    if (!offeredVideoTransceiver) {
+      throw new Error("missing offered video transceiver");
+    }
+
+    const videoTrack = stream.getVideoTracks()[0] ?? null;
+    if (!videoTrack) {
+      throw new Error("missing local video track");
+    }
+
+    await offeredVideoTransceiver.sender.replaceTrack(videoTrack);
+    offeredVideoTransceiver.sender.setStreams(stream);
+    console.log("media started; track attached to transceiver");
+  };
+
+  const handleSendMessage = () => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") {
+      console.warn("data channel is not open");
+      return;
+    }
+    if (!dcMessage.trim()) {
+      return;
+    }
+    dc.send(dcMessage);
+    setDcLog((prev) => [...prev, `[send] ${dcMessage}`]);
+    setDcMessage("");
   };
 
   return (
@@ -333,9 +407,31 @@ function App() {
         </video>
       </div>
       <div>
-        <button type="button" onClick={handleStartMedia}>
+        <button type="button" onClick={handleCreatePc}>
+          create pc
+        </button>
+        <button type="button" onClick={handleStartMedia} disabled={!pcReady}>
           start media
         </button>
+      </div>
+      <div>
+        <h3>Data Channel</h3>
+        <div>
+          <input
+            type="text"
+            value={dcMessage}
+            onChange={(e) => setDcMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSendMessage();
+            }}
+            placeholder="type a message..."
+            disabled={!dcReady}
+          />
+          <button type="button" onClick={handleSendMessage} disabled={!dcReady}>
+            send
+          </button>
+        </div>
+        <textarea readOnly rows={8} value={dcLog.join("\n")} />
       </div>
       <div>
         <label>ice candidates</label>
