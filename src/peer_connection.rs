@@ -152,10 +152,10 @@ impl PeerConnection {
         })
     }
 
-    pub async fn close(self) {
+    pub fn close(self) {
         self.event_loop_handle.abort();
         self.signaling_server_handle.abort();
-        drop(self)
+        drop(self);
     }
 
     pub async fn create_data_channel(&self) -> Result<DataChannel> {

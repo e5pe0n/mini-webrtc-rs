@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::sctp::{chunk::data::PayloadProtocol, manager::SctpManager};
 
+#[derive(Debug)]
 pub enum DataChannelEvent {
     Open,
     Message(DataChannelMessage),
