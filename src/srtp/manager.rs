@@ -27,7 +27,7 @@ pub struct SrtpManager {
     rtp_forward_socket: Option<UdpSocket>,
     rtp_forward_addr: SocketAddr,
     forwarded_rtp_packets: u64,
-    event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
+    _event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
 }
 
 impl SrtpManager {
@@ -64,7 +64,7 @@ impl SrtpManager {
             rtp_forward_socket,
             rtp_forward_addr,
             forwarded_rtp_packets: 0,
-            event_queue,
+            _event_queue: event_queue,
         }
     }
 

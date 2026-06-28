@@ -1,7 +1,6 @@
 use crate::dtls::handshake::{HandshakeMessage, header::HandshakeType};
 use anyhow::Context;
 use crate::common::buffer::{BufReader, BufWriter};
-use tracing::debug;
 
 #[derive(Debug)]
 pub struct Certificate {

@@ -93,7 +93,8 @@ impl PeerConnection {
         let event_loop_handle = tokio::spawn(async move {
             let sctp_manager = sctp_manager_clone;
             loop {
-                while let Some(event) = event_queue.lock().await.pop_front() {
+                let next_event = event_queue.lock().await.pop_front();
+                if let Some(event) = next_event {
                     match event {
                         InternalEvent::InboundDtlsPacket(TransportMessage { peer_addr, data }) => {
                             let _ = dtls_manager
@@ -117,7 +118,10 @@ impl PeerConnection {
                                 .await
                                 .inspect_err(|err| warn!("{err:?}"));
                         }
-                        InternalEvent::OutboundSctpPacket(TransportMessage { peer_addr, data }) => {
+                        InternalEvent::OutboundSctpPacket(TransportMessage {
+                            peer_addr: _,
+                            data,
+                        }) => {
                             let _ = dtls_manager
                                 .send_application_data(&data)
                                 .await
@@ -129,12 +133,11 @@ impl PeerConnection {
                                 .await
                                 .inspect_err(|err| warn!("{err:?}"));
                         }
-                        _ => {}
                     }
-                }
-
-                select! {
-                    _ = udp_server.recv() => {}
+                } else {
+                    select! {
+                        _ = udp_server.recv() => {}
+                    }
                 }
             }
         });

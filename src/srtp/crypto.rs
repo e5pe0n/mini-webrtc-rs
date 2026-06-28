@@ -17,6 +17,7 @@ pub struct SrtpEncryptionKeys {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SrtpGcm {
     srtp_gcm: Aes128Gcm,
     srtcp_gcm: Aes128Gcm,

@@ -1,8 +1,6 @@
 use crate::common::buffer::{BufReader, BufWriter};
 use mini_webrtc_derive::TryFromPrimitive;
 
-use anyhow::anyhow;
-
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-5
 #[derive(TryFromPrimitive)]
 #[try_from(type = "u8")]
@@ -13,9 +11,6 @@ pub enum ContentType {
     Handshake = 22,
     ApplicationData = 23,
 }
-
-const DTLS_VERSION_1_0: u16 = 0xfeff;
-const DTLS_VERSION_1_2: u16 = 0xfefd;
 
 #[derive(TryFromPrimitive)]
 #[try_from(type = "u16")]

@@ -25,7 +25,6 @@ fn hmac_sha1(key: &[u8], data: &[u8]) -> Vec<u8> {
 
 pub const HEADER_BYTES: usize = 20;
 
-const MAGIC_COOKIE_BYTES: usize = 4;
 pub const MAGIC_COOKIE: u32 = 0x2112A442;
 
 const METHOD_A_BITS: u16 = 0xf; // 0b0000000000001111
@@ -370,6 +369,7 @@ impl StunMessageBuilder {
     }
 }
 
+#[allow(dead_code)]
 pub struct StunClient {
     pub to: SocketAddr,
     ufrag: String,

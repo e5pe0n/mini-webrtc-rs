@@ -46,6 +46,7 @@ pub enum DcepMessage {
 // /                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DataChannelOpenMessage {
     message_type: MessageType,
     channel_type: ChannelType,
@@ -79,6 +80,7 @@ impl DataChannelOpenMessage {
     }
 }
 
+#[allow(dead_code)]
 pub struct DataChannelAckMessage {
     message_type: MessageType,
 }
