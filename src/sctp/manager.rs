@@ -12,13 +12,16 @@ use tracing::{debug, info, warn};
 
 use crate::{
     common::{TransportMessage, buffer::BufReader},
-    data_channel::InternalDataChannelMessage,
+    data_channel::{
+        DataChannelEvent, DataChannelMessage,
+        dcep::{DataChannelOpenMessage, MessageType},
+    },
     event_loop::InternalEvent,
     sctp::{
         chunk::{
             COOKIE_LENGTH_IN_BYTES, Chunk, ChunkParam,
             cookie_ack::CookieAckChunk,
-            data::{DataChunk, DataChunkValue},
+            data::{DataChunk, DataChunkValue, PayloadProtocol},
             init_ack::{InitAckChunk, InitAckChunkValue},
             sack::{SackChunk, SackChunkValue},
         },
@@ -27,7 +30,7 @@ use crate::{
 };
 
 pub struct SctpManager {
-    inbound_dc_tx: Option<UnboundedSender<InternalDataChannelMessage>>,
+    inbound_dc_tx: Option<UnboundedSender<DataChannelEvent>>,
     local_a_rwnd: u32,
     remote_a_rwnd: u32,
     max_num_outbound_streams: u16,
@@ -63,17 +66,14 @@ impl SctpManager {
         }
     }
 
-    pub fn set_data_channel_transport(
-        &mut self,
-        inbound_dc_tx: UnboundedSender<InternalDataChannelMessage>,
-    ) {
+    pub fn set_data_channel_transport(&mut self, inbound_dc_tx: UnboundedSender<DataChannelEvent>) {
         self.inbound_dc_tx = Some(inbound_dc_tx);
     }
 
     pub async fn send_data(
         &mut self,
         stream_id: u16,
-        payload_protocol_id: u32,
+        payload_protocol: PayloadProtocol,
         user_data: Vec<u8>,
     ) -> Result<()> {
         match self.peer_addr {
@@ -85,7 +85,7 @@ impl SctpManager {
                         tsn: self.local_tsn,
                         stream_id,
                         stream_seq_num: *stream_seq_num,
-                        payload_protocol_id,
+                        payload_protocol,
                         user_data,
                     },
                 );
@@ -176,12 +176,56 @@ impl SctpManager {
                 self.send_sctp_chunk(sack.raw, None, peer_addr).await?;
                 self.remote_tsn = Some(chunk.value.tsn.wrapping_add(1));
 
+                let mut reader = BufReader::new(&chunk.value.user_data);
                 if let Some(inbound_dc_tx) = &self.inbound_dc_tx {
-                    inbound_dc_tx.send(InternalDataChannelMessage {
-                        stream_id: chunk.value.stream_id,
-                        payload_protocol_id: chunk.value.payload_protocol_id,
-                        user_data: chunk.value.user_data.clone(),
-                    })?;
+                    match chunk.value.payload_protocol {
+                        PayloadProtocol::WebrtcDcep => {
+                            let message_type = reader.read_u8()?;
+                            let message_type = MessageType::try_from(message_type)?;
+                            match message_type {
+                                MessageType::DataChannelOpen => {
+                                    let data_channel_open_message =
+                                        DataChannelOpenMessage::decode(&mut reader)?;
+                                    debug!(
+                                        "received data channel open message: {data_channel_open_message:?}"
+                                    );
+                                    let ack_message = vec![0u8];
+                                    self.send_data(
+                                        chunk.value.stream_id,
+                                        PayloadProtocol::WebrtcDcep,
+                                        ack_message,
+                                    )
+                                    .await?;
+                                }
+                                MessageType::DataChannelAck => {
+                                    inbound_dc_tx.send(DataChannelEvent::Open)?;
+                                }
+                            }
+                        }
+                        PayloadProtocol::WebrtcBinary => {
+                            inbound_dc_tx.send(DataChannelEvent::Open)?;
+                        }
+                        PayloadProtocol::WebrtcBinaryEmpty => {
+                            inbound_dc_tx.send(DataChannelEvent::Message(
+                                DataChannelMessage::Binary(vec![0u8]),
+                            ))?;
+                        }
+                        PayloadProtocol::WebrtcString => {
+                            inbound_dc_tx.send(DataChannelEvent::Message(
+                                DataChannelMessage::Text(String::from_utf8(
+                                    chunk.value.user_data.clone(),
+                                )?),
+                            ))?;
+                        }
+                        PayloadProtocol::WebrtcStringEmpty => {
+                            inbound_dc_tx.send(DataChannelEvent::Message(
+                                DataChannelMessage::Text("".to_string()),
+                            ))?;
+                        }
+                        PayloadProtocol::Unsupported => {
+                            warn!("ignore unsupported payload protocol.");
+                        }
+                    }
                 }
             }
             Chunk::Sack(_chunk) => {

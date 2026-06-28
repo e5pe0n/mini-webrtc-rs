@@ -45,6 +45,7 @@ pub enum DcepMessage {
 // |                            Protocol                           |
 // /                                                               \
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#[derive(Debug)]
 pub struct DataChannelOpenMessage {
     message_type: MessageType,
     channel_type: ChannelType,
@@ -56,7 +57,7 @@ pub struct DataChannelOpenMessage {
 
 impl DataChannelOpenMessage {
     pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
-        let message_type = reader.read_u8()?;
+        // let message_type = reader.read_u8()?;
         let channel_type = reader.read_u8()?;
         let priority = reader.read_u16()?;
         let reliability_param = reader.read_u32()?;
@@ -68,7 +69,7 @@ impl DataChannelOpenMessage {
         reader.read_exact(&mut protocol)?;
 
         Ok(Self {
-            message_type: MessageType::try_from(message_type)?,
+            message_type: MessageType::DataChannelOpen,
             channel_type: ChannelType::try_from(channel_type)?,
             priority,
             reliability_param,
@@ -80,13 +81,4 @@ impl DataChannelOpenMessage {
 
 pub struct DataChannelAckMessage {
     message_type: MessageType,
-}
-
-impl DataChannelAckMessage {
-    pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
-        let message_type = reader.read_u8()?;
-        Ok(Self {
-            message_type: MessageType::try_from(message_type)?,
-        })
-    }
 }

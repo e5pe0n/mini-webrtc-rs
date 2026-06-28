@@ -1,11 +1,10 @@
 use crate::common::TransportMessage;
-use crate::data_channel::{DataChannel, InternalDataChannelMessage};
+use crate::data_channel::DataChannel;
 use crate::dtls::Fingerprint;
 use crate::dtls::manager::DtlsManager;
 use crate::event_loop::InternalEvent;
 use crate::sctp::manager::SctpManager;
 use crate::srtp::SrtpManager;
-use crate::srtp::crypto::SrtpEncryptionKeys;
 use crate::{
     ice::{IceAgent, IceCandidate},
     signaling_server::SignalingServer,
@@ -19,7 +18,7 @@ use std::collections::VecDeque;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tokio::select;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
