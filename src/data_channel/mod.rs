@@ -1,7 +1,11 @@
 pub mod dcep;
 
+use std::sync::Arc;
+
 use anyhow::Result;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
+
+use crate::sctp::manager::SctpManager;
 
 pub const PAYLOAD_PROTOCOL_ID_DCEP: u32 = 50;
 pub const PAYLOAD_PROTOCOL_ID_STRING: u32 = 51;
@@ -23,56 +27,58 @@ pub enum DataChannelMessage {
 }
 
 pub struct DataChannel {
-    stream_id: u16,
-    inbound_dc_rx: mpsc::UnboundedReceiver<InternalDataChannelMessage>,
-    outbound_dc_tx: mpsc::UnboundedSender<InternalDataChannelMessage>,
+    pub stream_id: u16,
+    pub inbound_dc_rx: mpsc::UnboundedReceiver<InternalDataChannelMessage>,
+    pub sctp_manager: Arc<Mutex<SctpManager>>,
 }
 
 impl DataChannel {
-    pub fn new(
-        stream_id: u16,
-        inbound_dc_rx: mpsc::UnboundedReceiver<InternalDataChannelMessage>,
-        outbound_dc_tx: mpsc::UnboundedSender<InternalDataChannelMessage>,
-    ) -> Self {
+    pub async fn new(stream_id: u16, sctp_manager: Arc<Mutex<SctpManager>>) -> Self {
+        let (inbound_dc_tx, inbound_dc_rx) =
+            mpsc::unbounded_channel::<InternalDataChannelMessage>();
+        sctp_manager
+            .lock()
+            .await
+            .set_data_channel_transport(inbound_dc_tx);
         Self {
             stream_id,
             inbound_dc_rx,
-            outbound_dc_tx,
+            sctp_manager,
         }
     }
 
-    pub fn stream_id(&self) -> u16 {
-        self.stream_id
-    }
-
-    pub fn send_text(&self, text: &str) -> Result<()> {
+    pub async fn send_text(&self, text: &str) -> Result<()> {
         let payload_protocol_id = if text.is_empty() {
             PAYLOAD_PROTOCOL_ID_STRING_EMPTY
         } else {
             PAYLOAD_PROTOCOL_ID_STRING
         };
 
-        self.outbound_dc_tx.send(InternalDataChannelMessage {
-            stream_id: self.stream_id,
-            payload_protocol_id,
-            user_data: text.as_bytes().to_vec(),
-        })?;
+        self.sctp_manager
+            .lock()
+            .await
+            .send_data(
+                self.stream_id,
+                payload_protocol_id,
+                text.as_bytes().to_vec(),
+            )
+            .await?;
 
         Ok(())
     }
 
-    pub fn send_binary(&self, data: &[u8]) -> Result<()> {
+    pub async fn send_binary(&self, data: &[u8]) -> Result<()> {
         let payload_protocol_id = if data.is_empty() {
             PAYLOAD_PROTOCOL_ID_BINARY_EMPTY
         } else {
             PAYLOAD_PROTOCOL_ID_BINARY
         };
 
-        self.outbound_dc_tx.send(InternalDataChannelMessage {
-            stream_id: self.stream_id,
-            payload_protocol_id,
-            user_data: data.to_vec(),
-        })?;
+        self.sctp_manager
+            .lock()
+            .await
+            .send_data(self.stream_id, payload_protocol_id, data.to_vec())
+            .await?;
 
         Ok(())
     }

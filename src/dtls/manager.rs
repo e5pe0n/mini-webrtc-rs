@@ -164,7 +164,11 @@ impl DtlsManager {
         }
     }
 
-    pub async fn handle_dtls_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+    pub async fn handle_inbound_packet(
+        &mut self,
+        data: &[u8],
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
         self.peer_addr = Some(peer_addr);
         let mut reader = BufReader::new(data);
 
@@ -272,7 +276,7 @@ impl DtlsManager {
         Ok(())
     }
 
-    async fn send_application_data(&mut self, payload: &[u8]) -> Result<()> {
+    pub async fn send_application_data(&mut self, payload: &[u8]) -> Result<()> {
         match self.peer_addr {
             Some(peer_addr) => {
                 self.send_message(
@@ -590,6 +594,12 @@ impl DtlsManager {
                 }
                 self.state = DtlsState::Connected;
                 info!("dtls handshake completed; state=connected");
+                self.event_queue
+                    .lock()
+                    .await
+                    .push_back(InternalEvent::DtlsConnected(
+                        self.export_sctp_encryption_keys()?,
+                    ));
             }
             _ => warn!(
                 "  -> Unknown handshake type {:?} from {}",
@@ -728,7 +738,7 @@ impl DtlsManager {
         .concat())
     }
 
-    pub fn export_keying_material(&self) -> Result<SrtpEncryptionKeys> {
+    pub fn export_sctp_encryption_keys(&self) -> Result<SrtpEncryptionKeys> {
         // // export key material
         let profile = match *&self
             .srtp_protection_profile

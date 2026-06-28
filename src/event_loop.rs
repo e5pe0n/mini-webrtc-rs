@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::common::TransportMessage;
+use crate::{common::TransportMessage, srtp::crypto::SrtpEncryptionKeys};
 
 pub type EventQueue = VecDeque<InternalEvent>;
 
@@ -10,6 +10,7 @@ pub enum InternalEvent {
     InboundSctpPacket(TransportMessage),
     OutboundSctpPacket(TransportMessage),
     InboundRtpPacket(TransportMessage),
+    DtlsConnected(SrtpEncryptionKeys),
 }
 
 pub struct EventLoop {}

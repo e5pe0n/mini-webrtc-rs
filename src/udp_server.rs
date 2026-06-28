@@ -47,6 +47,12 @@ impl UdpServer {
         self.handle_inbound_message(&buf[..len], peer_addr).await
     }
 
+    pub async fn send(&self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+        self.socket.send_to(&data, peer_addr).await?;
+        debug!("Sent {} bytes to {}", &data.len(), peer_addr);
+        Ok(())
+    }
+
     // pub async fn run(&mut self) -> Result<()> {
     //     let mut buf = vec![0u8; 65535];
 

@@ -76,7 +76,7 @@ impl SrtpManager {
         ));
     }
 
-    pub fn handle_rtp_packet(&mut self, data: &[u8], _peer_addr: SocketAddr) -> Result<()> {
+    pub fn handle_inbound_packet(&mut self, data: &[u8], _peer_addr: SocketAddr) -> Result<()> {
         let mut packet_reader = BufReader::new(data);
         let packet = RtpPacket::decode(&mut packet_reader)?;
 

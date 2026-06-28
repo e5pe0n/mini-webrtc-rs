@@ -7,10 +7,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use rand::{RngExt, random};
-use tokio::sync::{
-    Mutex,
-    mpsc::{UnboundedReceiver, UnboundedSender},
-};
+use tokio::sync::{Mutex, mpsc::UnboundedSender};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -31,7 +28,6 @@ use crate::{
 
 pub struct SctpManager {
     inbound_dc_tx: Option<UnboundedSender<InternalDataChannelMessage>>,
-    outbound_dc_rx: Option<UnboundedReceiver<InternalDataChannelMessage>>,
     local_a_rwnd: u32,
     remote_a_rwnd: u32,
     max_num_outbound_streams: u16,
@@ -51,7 +47,6 @@ impl SctpManager {
     pub fn new(event_queue: Arc<Mutex<VecDeque<InternalEvent>>>) -> Self {
         Self {
             inbound_dc_tx: None,
-            outbound_dc_rx: None,
             local_a_rwnd: 1024 * 1024,
             remote_a_rwnd: 0,
             max_num_outbound_streams: u16::MAX,
@@ -71,10 +66,8 @@ impl SctpManager {
     pub fn set_data_channel_transport(
         &mut self,
         inbound_dc_tx: UnboundedSender<InternalDataChannelMessage>,
-        outbound_dc_rx: UnboundedReceiver<InternalDataChannelMessage>,
     ) {
         self.inbound_dc_tx = Some(inbound_dc_tx);
-        self.outbound_dc_rx = Some(outbound_dc_rx);
     }
 
     pub async fn send_data(
@@ -105,7 +98,11 @@ impl SctpManager {
         }
     }
 
-    async fn handle_inbound_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
+    pub async fn handle_inbound_packet(
+        &mut self,
+        data: &[u8],
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
         let mut reader = BufReader::new(data);
         let packet = SctpPacket::decode(&mut reader)?;
         info!("received sctp packet: {:?}", packet);
@@ -156,6 +153,7 @@ impl SctpManager {
                         anyhow::bail!(anyhow!("invalid cookie."));
                     }
                     let cookie_ack = CookieAckChunk::new();
+                    self.peer_addr = Some(peer_addr);
                     self.send_sctp_chunk(cookie_ack.raw, None, peer_addr)
                         .await?;
                 }
