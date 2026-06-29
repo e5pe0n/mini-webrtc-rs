@@ -195,28 +195,36 @@ impl UdpServer {
             .attributes
             .get(&AttributeType::Username)
             .ok_or(anyhow!("username attribute does not exists."))?;
-        let (local_ufrag, local_pwd, remote_ufrag) = {
+        let (local_ufrag, local_pwd, remote_ufrags) = {
             let ice_agent = self.ice_agent.lock().await;
             (
                 ice_agent.local_peer.ufrag.clone(),
                 ice_agent.local_peer.pwd.clone(),
-                ice_agent.remote_peer.as_ref().map(|p| p.ufrag.clone()),
+                ice_agent
+                    .remote_peers
+                    .iter()
+                    .map(|peer| peer.ufrag.clone())
+                    .collect::<Vec<_>>(),
             )
         };
+
+        if remote_ufrags.is_empty() {
+            warn!("remote ufrags not configured; ignore the message.");
+            return Ok(()); // ignore message
+        }
+
         // https://datatracker.ietf.org/doc/html/rfc8445#section-7.2.2
         // - verify username in the message
         let username = unsafe { String::from_utf8_unchecked(username_attr.value.clone()) };
 
-        if let Some(remote_ufrag) = remote_ufrag {
-            let expected_username = format!("{local_ufrag}:{remote_ufrag}");
-            if username != expected_username {
-                warn!(
-                    "username attribute mismatch: actual={username}, expected={expected_username}; ignore the message."
-                );
-                return Ok(()); // ignore message
-            }
-        } else {
-            warn!("remote ufrag not configured; ignore the message.");
+        let expected_usernames = remote_ufrags
+            .iter()
+            .map(|remote_ufrag| format!("{local_ufrag}:{remote_ufrag}"))
+            .collect::<Vec<_>>();
+        if !expected_usernames.contains(&username) {
+            warn!(
+                "username attribute mismatch: actual={username}, expected={expected_usernames:?}; ignore the message."
+            );
             return Ok(()); // ignore message
         }
 

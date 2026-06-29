@@ -21,7 +21,13 @@ pub struct SdpMedia {
     pub fingerprint_hash: String,
     pub candidates: Vec<SdpMediaCandidate>,
     pub payloads: String,
-    pub rtp_codec: String,
+    pub rtp: Vec<Rtp>,
+
+    pub rtcp_mux: Option<String>,
+    pub protocol: String,
+
+    pub sctp_port: Option<u64>,
+    pub max_message_size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -29,6 +35,7 @@ pub struct SdpMedia {
 pub enum MediaType {
     Video,
     Audio,
+    Application,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -67,4 +74,12 @@ pub enum CandidateType {
 pub enum TransportType {
     Udp,
     Tcp,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub struct Rtp {
+    pub payload: u32,
+    pub codec: String,
+    pub rate: u32,
 }

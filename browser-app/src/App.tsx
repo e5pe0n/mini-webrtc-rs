@@ -31,7 +31,17 @@ type SdpMedia = {
   fingerprintHash: string;
   candidates: SdpMediaCandidate[];
   payloads: string;
-  rtpCodec: string;
+  rtp: Rtp[];
+  rtcpMux?: "rtcp-mux";
+  protocol: string;
+  sctpPort?: number;
+  maxMessageSize?: number;
+};
+
+type Rtp = {
+  payload: number;
+  codec: string;
+  rate: number;
 };
 
 type SdpMediaCandidate = {
@@ -69,7 +79,7 @@ async function sendSdpAnswer(
       answer.media?.map((m) => ({
         mediaId: String(m.mid!),
         mediaType: m.type as MediaType,
-        direction: m.direction as MediaDirection,
+        direction: m.direction ? (m.direction as MediaDirection) : "sendrecv",
         ufrag: m.iceUfrag!,
         pwd: m.icePwd!,
         fingerprintType: m.fingerprint!.type as FingerprintType,
@@ -84,7 +94,8 @@ async function sendSdpAnswer(
               transportType: c.transport as TransportType,
             })) ?? [],
         payloads: "",
-        rtpCodec: "",
+        rtp: [],
+        protocol: m.protocol,
       })) ?? [],
   };
 
@@ -193,8 +204,8 @@ function App() {
         type: media.mediaType,
         direction: "recvonly",
         port: 9,
-        rtcpMux: "rtcp-mux",
-        protocol: "UDP/TLS/RTP/SAVPF",
+        rtcpMux: media.rtcpMux,
+        protocol: media.protocol,
         payloads: media.payloads,
         connection: {
           version: 4,
@@ -215,16 +226,16 @@ function App() {
           port: candidate.port,
           type: candidate.candidateType,
         })),
-        rtp: [
-          {
-            payload: Number.parseInt(media.payloads, 10),
-            codec: media.rtpCodec.split("/")[0],
-            rate: Number.parseInt(media.rtpCodec.split("/")[1] ?? "90000", 10),
-            encoding: media.rtpCodec.split("/")[2]
-              ? Number.parseInt(media.rtpCodec.split("/")[2], 10)
-              : undefined,
-          },
-        ],
+        rtp:
+          media.rtp.length > 0
+            ? [
+                {
+                  payload: media.rtp[0].payload,
+                  codec: media.rtp[0].codec,
+                  rate: media.rtp[0].rate,
+                },
+              ]
+            : [],
         fmtp: [],
       })),
     });
@@ -245,6 +256,36 @@ function App() {
     }
 
     offeredVideoTransceiver.direction = "sendonly";
+
+    // create data channel
+    const dc = pc.createDataChannel("data");
+    dcRef.current = dc;
+    dc.onopen = () => {
+      console.log("data channel opened");
+      setDcReady(true);
+      setDcLog((prev) => [...prev, "[system] data channel opened"]);
+    };
+    dc.onclose = () => {
+      console.log("data channel closed");
+      setDcReady(false);
+      setDcLog((prev) => [...prev, "[system] data channel closed"]);
+    };
+    dc.onmessage = (ev) => {
+      console.log("data channel message", ev.data);
+      setDcLog((prev) => [...prev, `[recv] ${ev.data}`]);
+    };
+    dc.onerror = (ev) => {
+      console.error("data channel error", ev);
+      setDcLog((prev) => [...prev, `[error] ${ev}`]);
+    };
+
+    // {
+    //   const offer = await pc.createOffer();
+    //   console.log(sdpTransform.parse(offer.sdp!));
+
+    //   const answer = await pc.createAnswer();
+    //   console.log(sdpTransform.parse(answer.sdp!));
+    // }
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -325,28 +366,6 @@ function App() {
         }
       }
     }, 2000);
-
-    // create data channel
-    const dc = pc.createDataChannel("data");
-    dcRef.current = dc;
-    dc.onopen = () => {
-      console.log("data channel opened");
-      setDcReady(true);
-      setDcLog((prev) => [...prev, "[system] data channel opened"]);
-    };
-    dc.onclose = () => {
-      console.log("data channel closed");
-      setDcReady(false);
-      setDcLog((prev) => [...prev, "[system] data channel closed"]);
-    };
-    dc.onmessage = (ev) => {
-      console.log("data channel message", ev.data);
-      setDcLog((prev) => [...prev, `[recv] ${ev.data}`]);
-    };
-    dc.onerror = (ev) => {
-      console.error("data channel error", ev);
-      setDcLog((prev) => [...prev, `[error] ${ev}`]);
-    };
 
     setPcReady(true);
   };

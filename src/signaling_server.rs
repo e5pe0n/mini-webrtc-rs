@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{
     ice::{IceAgent, Peer},
@@ -76,12 +76,9 @@ async fn handle_get_offer(State(state): State<Arc<AppState>>) -> impl IntoRespon
 async fn handle_post_answer(
     State(state): State<Arc<AppState>>,
     Json(answer): Json<SdpMessage>,
-) -> impl IntoResponse {
+) -> (StatusCode, Json<SimpleResponse>) {
     for media in &answer.medias {
-        info!(
-            "POST / signaling: media answer; mid={}, type={:?}, direction={:?}, payloads={}, codec={}",
-            media.media_id, media.media_type, media.direction, media.payloads, media.rtp_codec
-        );
+        info!("POST / signaling: media answer; {media:?}");
     }
 
     info!(
@@ -90,7 +87,7 @@ async fn handle_post_answer(
         answer.medias.len()
     );
 
-    if let Some(remote_peer) = answer
+    let remote_peers = answer
         .medias
         .iter()
         .map(|media| Peer {
@@ -98,25 +95,16 @@ async fn handle_post_answer(
             pwd: media.pwd.clone(),
             fingerprint: media.fingerprint_hash.clone(),
         })
-        .next()
-    {
-        let mut ice_agent = state.ice_agent.lock().await;
-        let remote_ufrag = remote_peer.ufrag.clone();
-        ice_agent.remote_peer = Some(remote_peer);
-        info!("POST / signaling: remote peer configured; remote_ufrag={remote_ufrag}");
-        return Ok((
-            StatusCode::OK,
-            Json(SimpleResponse {
-                message: "post answer succeeded.".to_string(),
-            }),
-        ));
-    } else {
-        warn!("POST / signaling: answer did not contain any medias");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(SimpleResponse {
-                message: "media not found in sdp message.".to_string(),
-            }),
-        ));
-    }
+        .collect::<Vec<_>>();
+    info!(
+        "POST / signaling: remote peer configured; remote_peers={:?}",
+        remote_peers.len()
+    );
+    state.ice_agent.lock().await.remote_peers = remote_peers;
+    (
+        StatusCode::OK,
+        Json(SimpleResponse {
+            message: "post answer succeeded.".to_string(),
+        }),
+    )
 }

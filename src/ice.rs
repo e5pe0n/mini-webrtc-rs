@@ -1,4 +1,4 @@
-use crate::dtls::Fingerprint;
+use crate::{dtls::Fingerprint, sdp::Rtp};
 use rand::RngExt;
 use std::net::IpAddr;
 
@@ -39,7 +39,7 @@ pub struct Peer {
 pub struct IceAgent {
     pub ice_candidates: Vec<IceCandidate>,
     pub local_peer: Peer,
-    pub remote_peer: Option<Peer>,
+    pub remote_peers: Vec<Peer>,
 }
 
 impl IceAgent {
@@ -51,34 +51,69 @@ impl IceAgent {
                 pwd: generate_ice_pwd(),
                 fingerprint: fingerprint.to_string(),
             },
-            remote_peer: None,
+            remote_peers: vec![],
         }
     }
 
     pub fn generate_sdp_offer(&self) -> SdpMessage {
         SdpMessage {
             session_id: "123456789".to_string(),
-            medias: vec![SdpMedia {
-                media_id: "0".to_string(),
-                media_type: MediaType::Video,
-                direction: MediaDirection::Recvonly,
-                payloads: "96".to_string(), // VP8
-                rtp_codec: "VP8/90000".to_string(),
-                ufrag: self.local_peer.ufrag.clone(),
-                pwd: self.local_peer.pwd.clone(),
-                fingerprint_type: FingerprintType::Sha256,
-                fingerprint_hash: self.local_peer.fingerprint.clone(),
-                candidates: self
-                    .ice_candidates
-                    .iter()
-                    .map(|c| SdpMediaCandidate {
-                        ip: c.ip.clone(),
-                        port: c.port,
-                        candidate_type: CandidateType::Host,
-                        transport_type: TransportType::Udp,
-                    })
-                    .collect(),
-            }],
+            medias: vec![
+                SdpMedia {
+                    media_id: "0".to_string(),
+                    media_type: MediaType::Video,
+                    direction: MediaDirection::Recvonly,
+                    payloads: "96".to_string(), // VP8
+                    rtp: vec![Rtp {
+                        payload: 96,
+                        codec: "VP8".to_string(),
+                        rate: 90000,
+                    }],
+                    ufrag: self.local_peer.ufrag.clone(),
+                    pwd: self.local_peer.pwd.clone(),
+                    fingerprint_type: FingerprintType::Sha256,
+                    fingerprint_hash: self.local_peer.fingerprint.clone(),
+                    candidates: self
+                        .ice_candidates
+                        .iter()
+                        .map(|c| SdpMediaCandidate {
+                            ip: c.ip.clone(),
+                            port: c.port,
+                            candidate_type: CandidateType::Host,
+                            transport_type: TransportType::Udp,
+                        })
+                        .collect(),
+                    rtcp_mux: Some("rtcp-mux".to_string()),
+                    protocol: "UDP/TLS/RTP/SAVPF".to_string(),
+                    sctp_port: None,
+                    max_message_size: None,
+                },
+                SdpMedia {
+                    media_id: "1".to_string(),
+                    media_type: MediaType::Application,
+                    direction: MediaDirection::Recvonly,
+                    payloads: "webrtc-datachannel".to_string(),
+                    rtp: vec![],
+                    ufrag: self.local_peer.ufrag.clone(),
+                    pwd: self.local_peer.pwd.clone(),
+                    fingerprint_type: FingerprintType::Sha256,
+                    fingerprint_hash: self.local_peer.fingerprint.clone(),
+                    candidates: self
+                        .ice_candidates
+                        .iter()
+                        .map(|c| SdpMediaCandidate {
+                            ip: c.ip.clone(),
+                            port: c.port,
+                            candidate_type: CandidateType::Host,
+                            transport_type: TransportType::Udp,
+                        })
+                        .collect(),
+                    rtcp_mux: None,
+                    protocol: "UDP/DTLS/SCTP".to_string(),
+                    sctp_port: Some(4433),
+                    max_message_size: None,
+                },
+            ],
         }
     }
 }
