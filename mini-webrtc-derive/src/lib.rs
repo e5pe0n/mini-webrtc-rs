@@ -53,7 +53,7 @@ pub fn derive_try_from_primitive(input: TokenStream) -> TokenStream {
         impl TryFrom<#from_type> for #enum_name {
             type Error = crate::common::error::MiniWebrtcRsError;
 
-            fn try_from(value: #from_type) -> Result<Self, Self::Error> {
+            fn try_from(value: #from_type) -> Result<Self, <Self as TryFrom<#from_type>>::Error> {
                 match value {
                     #(#match_arms,)*
                     _ => Err(crate::common::error::MiniWebrtcRsError::InvalidEnumVariantError {

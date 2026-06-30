@@ -6,7 +6,7 @@ pub mod init_ack;
 pub mod sack;
 
 use anyhow::Result;
-use mini_webrtc_derive::FromPrimitive;
+use mini_webrtc_derive::TryFromPrimitive;
 use tracing::warn;
 
 use crate::{
@@ -22,8 +22,8 @@ use crate::{
     },
 };
 
-#[derive(FromPrimitive)]
-#[from(type = "u8", default = "Unsupported")]
+#[derive(TryFromPrimitive)]
+#[try_from(type = "u8")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChunkType {
     Data = 0,
@@ -39,7 +39,6 @@ pub enum ChunkType {
     CookieEcho = 10,
     CookieAck = 11,
     ShutdownComplete = 14,
-    Unsupported = 255,
 }
 
 impl From<ChunkType> for u8 {
@@ -117,12 +116,12 @@ impl ChunkHeader {
         self.chunk_length = chunk_length;
 
         let mut writer = RefBufWriter::new(&mut self.raw);
-        writer.write_u16_at(chunk_length, 3);
+        writer.write_u16_at(chunk_length, 2);
     }
 
     pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
         reader.start();
-        let chunk_type = ChunkType::from(reader.read_u8()?);
+        let chunk_type = ChunkType::try_from(reader.read_u8()?)?;
         let chunk_flags = reader.read_u8()?;
         let chunk_length = reader.read_u16()?;
         let raw = reader.clone_from_start();

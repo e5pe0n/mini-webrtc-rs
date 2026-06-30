@@ -197,6 +197,12 @@ function App() {
       },
       setup: "actpass",
       iceOptions: "trickle",
+      groups: [
+        {
+          type: "BUNDLE",
+          mids: offer.medias.map((media) => media.mediaId).join(" "),
+        },
+      ],
       media: offer.medias.map((media) => ({
         // sdp-transform expects codec name and rate separately.
         // Server sends "VP8/90000", so split it if needed.
