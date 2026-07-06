@@ -145,6 +145,7 @@ pub const COOKIE_LENGTH_IN_BYTES: u16 = 32;
 #[derive(Debug, Clone)]
 pub enum ChunkParam {
     StateCookie(Vec<u8>),
+    ForwardTsn,
     Unsupported(u16),
 }
 
@@ -156,6 +157,11 @@ impl From<ChunkParam> for Vec<u8> {
                 writer.write_u16(7);
                 writer.write_u16(cookie.len() as u16);
                 writer.write_bytes(&cookie);
+            }
+            ChunkParam::ForwardTsn => {
+                // https://datatracker.ietf.org/doc/html/rfc3758#section-3.1
+                writer.write_u16(49152);
+                writer.write_u16(4);
             }
             _ => {
                 warn!("unsupported chunk params: {:?}", value);

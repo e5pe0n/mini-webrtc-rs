@@ -136,7 +136,10 @@ impl SctpManager {
                         chunk.value.num_inbound_streams,
                     ),
                     init_tsn: self.local_tsn,
-                    params: vec![ChunkParam::StateCookie(cookie.clone())],
+                    params: vec![
+                        ChunkParam::StateCookie(cookie.clone()),
+                        ChunkParam::ForwardTsn,
+                    ],
                 });
 
                 self.send_sctp_chunk(init_ack.raw, Some(chunk.value.init_tag), peer_addr)
