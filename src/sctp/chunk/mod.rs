@@ -73,7 +73,7 @@ impl Chunk {
                 Ok(Chunk::Init(InitChunk { header, value }))
             }
             ChunkType::CookieEcho => {
-                let cookie_length = header.chunk_length - COOKIE_LENGTH_IN_BYTES;
+                let cookie_length = header.chunk_length - CHUNK_HEADER_LENGTH_IN_BYTES as u16;
                 let value = CookieEchoChunkValue::decode(reader, cookie_length)?;
                 Ok(Chunk::CookieEcho(CookieEchoChunk { header, value }))
             }
@@ -155,7 +155,8 @@ impl From<ChunkParam> for Vec<u8> {
         match value {
             ChunkParam::StateCookie(cookie) => {
                 writer.write_u16(7);
-                writer.write_u16(cookie.len() as u16);
+                // Parameter Length includes the 4-byte type+length header.
+                writer.write_u16((4 + cookie.len()) as u16);
                 writer.write_bytes(&cookie);
             }
             ChunkParam::ForwardTsn => {
@@ -176,8 +177,14 @@ impl ChunkParam {
         match self {
             ChunkParam::StateCookie(cookie) => {
                 writer.write_u16(7);
-                writer.write_u16(cookie.len() as u16);
+                // Parameter Length includes the 4-byte type+length header.
+                writer.write_u16((4 + cookie.len()) as u16);
                 writer.write_bytes(cookie);
+            }
+            ChunkParam::ForwardTsn => {
+                // https://datatracker.ietf.org/doc/html/rfc3758#section-3.1
+                writer.write_u16(49152);
+                writer.write_u16(4);
             }
             _ => {}
         }
@@ -185,8 +192,10 @@ impl ChunkParam {
 
     pub fn decode(reader: &mut BufReader) -> Result<Self, MiniWebrtcRsError> {
         let param_type = reader.read_u16()?;
+        // Length includes the 4-byte type+length header; the value is the rest.
         let length = reader.read_u16()?;
-        let mut value = vec![0u8; length as usize];
+        let value_len = (length as usize).saturating_sub(4);
+        let mut value = vec![0u8; value_len];
         reader.read_exact(&mut value)?;
 
         match param_type {

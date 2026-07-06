@@ -3,6 +3,8 @@ run udp server
 ```sh
 watchexec -r -e rs,toml -- cargo run
 watchexec -r -e rs,toml -- RUST_LOG=mini_webrtc_rs=debug cargo run
+watchexec -r -e rs,toml -- SSLKEYLOGFILE=.local/sslkeylog RUST_LOG=mini_webrtc_rs=debug cargo run
+
 ```
 
 run local dtls server

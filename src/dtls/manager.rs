@@ -508,6 +508,14 @@ impl DtlsManager {
 
                 self.master_secret = Some(master_secret);
 
+                // Emit the DTLS secrets in NSS Key Log format so Wireshark can
+                // decrypt the DTLS records (and thus the SCTP inside). For DTLS
+                // 1.2 with AES-GCM the exported session master secret is used:
+                //   CLIENT_RANDOM <client_random> <master_secret>
+                // Point Wireshark's (Pre)-Master-Secret log filename at the file
+                // named by $SSLKEYLOGFILE, or paste the logged line into one.
+                log_dtls_keys(&client_random, self.master_secret.as_ref().unwrap());
+
                 let encryption_keys = Aes128GcmEncryptionKeys::new(
                     &self.master_secret.clone().unwrap(),
                     &client_random,
@@ -773,5 +781,43 @@ impl DtlsManager {
                 .to_vec(),
         };
         Ok(encryption_keys)
+    }
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Log the DTLS session secrets in NSS Key Log format for Wireshark.
+///
+/// Set `SSLKEYLOGFILE` to append the line to a file that Wireshark reads
+/// (Preferences > Protocols > TLS > (Pre)-Master-Secret log filename). The
+/// line is always emitted to the debug log as well.
+fn log_dtls_keys(client_random: &Random, master_secret: &[u8]) {
+    let line = format!(
+        "CLIENT_RANDOM {} {}",
+        to_hex(&client_random.to_bytes()),
+        to_hex(master_secret),
+    );
+    debug!("dtls keylog: {line}");
+
+    if let Ok(path) = std::env::var("SSLKEYLOGFILE") {
+        use std::io::Write;
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                if let Err(e) = writeln!(f, "{line}") {
+                    warn!("failed to write SSLKEYLOGFILE {path}: {e}");
+                }
+            }
+            Err(e) => warn!("failed to open SSLKEYLOGFILE {path}: {e}"),
+        }
     }
 }

@@ -76,8 +76,12 @@ impl SctpPacket {
         writer.write_bytes(chunk_raw);
 
         let mut raw = writer.buf();
+        // SCTP stores the CRC32c checksum in little-endian byte order
+        // (RFC 9260 / RFC 3309). The reflected CRC_32_ISCSI value must be
+        // serialized with to_le_bytes(); using to_be_bytes() byte-reverses it,
+        // causing every packet to be dropped by the peer.
         let checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(&raw);
-        raw[8..12].copy_from_slice(&checksum.to_be_bytes());
+        raw[8..12].copy_from_slice(&checksum.to_le_bytes());
         raw
     }
 }
