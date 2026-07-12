@@ -3,6 +3,7 @@ use crate::data_channel::DataChannel;
 use crate::dtls::Fingerprint;
 use crate::dtls::manager::DtlsManager;
 use crate::event_loop::InternalEvent;
+use crate::media_track::{MediaPacket, MediaTrackStream};
 use crate::sctp::manager::SctpManager;
 use crate::srtp::SrtpManager;
 use crate::{
@@ -18,7 +19,7 @@ use std::collections::VecDeque;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tokio::select;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
@@ -27,6 +28,7 @@ const STUN_SERVER_ADDRESS: &'static str = "stun.l.google.com:19302";
 
 pub struct PeerConnection {
     sctp_manager: Arc<Mutex<SctpManager>>,
+    media_track_rx: Mutex<Option<mpsc::UnboundedReceiver<MediaPacket>>>,
     event_loop_handle: JoinHandle<Result<()>>,
     signaling_server_handle: JoinHandle<Result<()>>,
 }
@@ -78,6 +80,8 @@ impl PeerConnection {
 
         let mut dtls_manager = DtlsManager::new(certified_key, fingerprint, event_queue.clone());
         let mut srtp_manager = SrtpManager::new(event_queue.clone());
+        let (media_track_tx, media_track_rx) = mpsc::unbounded_channel::<MediaPacket>();
+        srtp_manager.set_media_track_transport(media_track_tx);
         let sctp_manager = SctpManager::new(event_queue.clone());
         let sctp_manager = Arc::new(Mutex::new(sctp_manager));
         let sctp_manager_clone = sctp_manager.clone();
@@ -149,6 +153,7 @@ impl PeerConnection {
             event_loop_handle,
             signaling_server_handle,
             sctp_manager,
+            media_track_rx: Mutex::new(Some(media_track_rx)),
         })
     }
 
@@ -160,5 +165,17 @@ impl PeerConnection {
 
     pub async fn create_data_channel(&self) -> Result<DataChannel> {
         Ok(DataChannel::new(0, self.sctp_manager.clone()).await)
+    }
+
+    /// Takes the inbound media track stream. Decrypted RTP packets received on
+    /// the connection are delivered through it. Can only be taken once.
+    pub async fn create_media_track_stream(&self) -> Result<MediaTrackStream> {
+        let media_track_rx = self
+            .media_track_rx
+            .lock()
+            .await
+            .take()
+            .ok_or(anyhow!("media track stream already created"))?;
+        Ok(MediaTrackStream::new(media_track_rx))
     }
 }

@@ -1,9 +1,10 @@
 use anyhow::{Result, anyhow};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc::UnboundedSender};
 
 use crate::{
     common::buffer::BufReader,
     event_loop::InternalEvent,
+    media_track::MediaPacket,
     srtp::{
         SrtpSsrcState,
         crypto::{SrtpEncryptionKeys, SrtpGcm},
@@ -12,60 +13,34 @@ use crate::{
 };
 use std::{
     collections::{HashMap, VecDeque},
-    env,
-    net::{SocketAddr, UdpSocket},
+    net::SocketAddr,
     sync::Arc,
 };
 use tracing::{info, warn};
 
-const LIVE_VIDEO_FORWARD_ADDR: &str = "127.0.0.1:5004";
-const LIVE_VIDEO_FORWARD_ENABLED_ENV: &str = "MINI_WEBRTC_LIVE_RTP_FORWARD";
-
 pub struct SrtpManager {
     gcm: Option<SrtpGcm>,
     ssrc_states: HashMap<u32, SrtpSsrcState>,
-    rtp_forward_socket: Option<UdpSocket>,
-    rtp_forward_addr: SocketAddr,
-    forwarded_rtp_packets: u64,
+    media_track_tx: Option<UnboundedSender<MediaPacket>>,
+    dispatched_rtp_packets: u64,
     _event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
 }
 
 impl SrtpManager {
     pub fn new(event_queue: Arc<Mutex<VecDeque<InternalEvent>>>) -> Self {
-        let rtp_forward_addr = LIVE_VIDEO_FORWARD_ADDR
-            .parse()
-            .expect("invalid LIVE_VIDEO_FORWARD_ADDR");
-        let rtp_forward_socket = if is_live_video_forward_enabled() {
-            match UdpSocket::bind("127.0.0.1:0") {
-                Ok(socket) => Some(socket),
-                Err(err) => {
-                    warn!("failed to initialize local RTP forwarding socket for live view: {err}");
-                    None
-                }
-            }
-        } else {
-            info!(
-                "live RTP forwarding disabled by env {}",
-                LIVE_VIDEO_FORWARD_ENABLED_ENV
-            );
-            None
-        };
-
-        if rtp_forward_socket.is_some() {
-            info!(
-                "SRTP decrypt path will forward plaintext RTP to {} for local viewers",
-                LIVE_VIDEO_FORWARD_ADDR
-            );
-        }
-
         Self {
             gcm: None,
             ssrc_states: HashMap::new(),
-            rtp_forward_socket,
-            rtp_forward_addr,
-            forwarded_rtp_packets: 0,
+            media_track_tx: None,
+            dispatched_rtp_packets: 0,
             _event_queue: event_queue,
         }
+    }
+
+    /// Registers the sink that receives decrypted RTP packets. The application
+    /// consumes them through a [`crate::media_track::MediaTrackStream`].
+    pub fn set_media_track_transport(&mut self, media_track_tx: UnboundedSender<MediaPacket>) {
+        self.media_track_tx = Some(media_track_tx);
     }
 
     pub fn set_encryption_keys(&mut self, srtp_encryption_keys: SrtpEncryptionKeys) {
@@ -81,32 +56,42 @@ impl SrtpManager {
         let packet = RtpPacket::decode(&mut packet_reader)?;
 
         let decrypted_packet = self.decrypt(packet)?;
-        self.forward_decrypted_packet(&decrypted_packet);
+        self.dispatch_media_packet(&decrypted_packet);
         Ok(())
     }
 
-    fn forward_decrypted_packet(&mut self, packet: &RtpPacket) {
-        let Some(socket) = self.rtp_forward_socket.as_ref() else {
+    fn dispatch_media_packet(&mut self, packet: &RtpPacket) {
+        let Some(media_track_tx) = self.media_track_tx.as_ref() else {
             return;
         };
 
-        let mut raw_rtp = Vec::with_capacity(packet.header_size + packet.payload.len());
-        raw_rtp.extend_from_slice(&packet.raw[..packet.header_size]);
-        raw_rtp.extend_from_slice(&packet.payload);
+        let mut rtp = Vec::with_capacity(packet.header_size + packet.payload.len());
+        rtp.extend_from_slice(&packet.raw[..packet.header_size]);
+        rtp.extend_from_slice(&packet.payload);
 
-        if let Err(err) = socket.send_to(&raw_rtp, self.rtp_forward_addr) {
-            warn!(
-                "failed to forward decrypted RTP packet to {}: {}",
-                self.rtp_forward_addr, err
-            );
+        // The payload type is the low 7 bits of the second RTP header byte.
+        let payload_type = packet.raw.get(1).map(|byte| byte & 0b0111_1111).unwrap_or(0);
+        let media_packet = MediaPacket {
+            ssrc: packet.header.ssrc,
+            payload_type,
+            sequence_number: packet.header.sequence_number,
+            timestamp: packet.header.timestamp,
+            marker: packet.header.marker,
+            rtp,
+        };
+
+        if media_track_tx.send(media_packet).is_err() {
+            // The media track stream was dropped; stop dispatching packets.
+            self.media_track_tx = None;
+            warn!("media track stream dropped; stop dispatching decrypted RTP packets");
             return;
         }
 
-        self.forwarded_rtp_packets += 1;
-        if self.forwarded_rtp_packets == 1 {
+        self.dispatched_rtp_packets += 1;
+        if self.dispatched_rtp_packets == 1 {
             info!(
-                "forwarded first decrypted RTP packet to {} (pt={:?}, ssrc=0x{:08x})",
-                self.rtp_forward_addr, packet.header.payload_type, packet.header.ssrc
+                "dispatched first decrypted RTP packet to media track (pt={:?}, ssrc=0x{:08x})",
+                packet.header.payload_type, packet.header.ssrc
             );
         }
     }
@@ -139,15 +124,5 @@ impl SrtpManager {
         ssrc_state.commit_packet_index(packet_index);
 
         Ok(decrypted_packet)
-    }
-}
-
-fn is_live_video_forward_enabled() -> bool {
-    match env::var(LIVE_VIDEO_FORWARD_ENABLED_ENV) {
-        Ok(value) => !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "off" | "no"
-        ),
-        Err(_) => true,
     }
 }

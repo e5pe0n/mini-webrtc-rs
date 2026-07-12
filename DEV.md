@@ -43,7 +43,7 @@ run viewer first (listens on UDP 5004)
 gst-launch-1.0 -v udpsrc port=5004 caps="application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000" ! rtpjitterbuffer latency=50 drop-on-latency=true ! rtpvp8depay ! vp8dec ! videoconvert ! autovideosink sync=false
 ```
 
-then run the Rust server and start media from browser app; decrypted RTP packets are forwarded to 127.0.0.1:5004 in SRTP manager.
+then run the Rust server and start media from browser app; the SRTP manager decrypts RTP and delivers it over a `MediaTrackStream`, which `main.rs` forwards to 127.0.0.1:5004 for GStreamer.
 
 disable forwarding toggle (optional)
 
