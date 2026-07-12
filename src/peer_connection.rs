@@ -3,9 +3,15 @@ use crate::data_channel::DataChannel;
 use crate::dtls::Fingerprint;
 use crate::dtls::manager::DtlsManager;
 use crate::event_loop::InternalEvent;
-use crate::media_track::{MediaPacket, MediaTrackStream};
+use crate::ice::Peer;
+use crate::media_stream_track::{
+    MediaStreamTrack, MediaStreamTrackKind, MediaStreamTrackReadyState,
+};
+use crate::rtc_event::{RtcEvent, RtcTrackEvent};
 use crate::sctp::manager::SctpManager;
+use crate::sdp::MediaType;
 use crate::srtp::SrtpManager;
+use crate::srtp::packet::RtpPacket;
 use crate::{
     ice::{IceAgent, IceCandidate},
     signaling_server::SignalingServer,
@@ -21,14 +27,14 @@ use std::sync::Arc;
 use tokio::select;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const UDP_SERVER_PORT: u64 = 4433;
 const STUN_SERVER_ADDRESS: &'static str = "stun.l.google.com:19302";
 
 pub struct PeerConnection {
     sctp_manager: Arc<Mutex<SctpManager>>,
-    media_track_rx: Mutex<Option<mpsc::UnboundedReceiver<MediaPacket>>>,
+    rtc_event_rx: mpsc::UnboundedReceiver<RtcEvent>,
     event_loop_handle: JoinHandle<Result<()>>,
     signaling_server_handle: JoinHandle<Result<()>>,
 }
@@ -76,20 +82,20 @@ impl PeerConnection {
             fingerprint.clone(),
         )));
 
-        let event_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let internal_event_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let (rtc_event_tx, rtc_event_rx) = mpsc::unbounded_channel::<RtcEvent>();
 
-        let mut dtls_manager = DtlsManager::new(certified_key, fingerprint, event_queue.clone());
-        let mut srtp_manager = SrtpManager::new(event_queue.clone());
-        let (media_track_tx, media_track_rx) = mpsc::unbounded_channel::<MediaPacket>();
-        srtp_manager.set_media_track_transport(media_track_tx);
-        let sctp_manager = SctpManager::new(event_queue.clone());
+        let mut dtls_manager =
+            DtlsManager::new(certified_key, fingerprint, internal_event_queue.clone());
+        let mut srtp_manager = SrtpManager::new(internal_event_queue.clone());
+        let sctp_manager = SctpManager::new(internal_event_queue.clone());
         let sctp_manager = Arc::new(Mutex::new(sctp_manager));
         let sctp_manager_clone = sctp_manager.clone();
 
         let mut udp_server = UdpServer::new(
             &format!("0.0.0.0:{UDP_SERVER_PORT}"),
             ice_agent.clone(),
-            event_queue.clone(),
+            internal_event_queue.clone(),
         )
         .await
         .context("init udp server")?;
@@ -97,9 +103,50 @@ impl PeerConnection {
         let event_loop_handle = tokio::spawn(async move {
             let sctp_manager = sctp_manager_clone;
             loop {
-                let next_event = event_queue.lock().await.pop_front();
+                let next_event = internal_event_queue.lock().await.pop_front();
                 if let Some(event) = next_event {
                     match event {
+                        InternalEvent::SdpAnswer(answer) => {
+                            let remote_peers = answer
+                                .medias
+                                .iter()
+                                .map(|media| Peer {
+                                    ufrag: media.ufrag.clone(),
+                                    pwd: media.pwd.clone(),
+                                    fingerprint: media.fingerprint_hash.clone(),
+                                })
+                                .collect::<Vec<_>>();
+                            udp_server.set_remote_peers(remote_peers).await;
+
+                            for media in answer.medias {
+                                match media.media_type {
+                                    MediaType::Video => {
+                                        let (inbound_rtp_tx, inbound_rtp_rx) =
+                                            mpsc::unbounded_channel::<RtpPacket>();
+
+                                        srtp_manager.set_media_track_transport(inbound_rtp_tx);
+                                        let media_stream_tack = MediaStreamTrack {
+                                            id: media.track_id.clone(),
+                                            kind: MediaStreamTrackKind::try_from(media.media_type)?,
+                                            label: media.track_id,
+                                            ready_state: MediaStreamTrackReadyState::Live,
+                                            inbound_rtp_rx,
+                                        };
+
+                                        if let Err(err) =
+                                            rtc_event_tx.send(RtcEvent::RtcTrack(RtcTrackEvent {
+                                                track: media_stream_tack,
+                                            }))
+                                        {
+                                            warn!("failed to emit rtc track event: {err}");
+                                        }
+                                    }
+                                    _ => {
+                                        debug!("ignore media type: {:?}", media.media_type);
+                                    }
+                                }
+                            }
+                        }
                         InternalEvent::InboundDtlsPacket(TransportMessage { peer_addr, data }) => {
                             let _ = dtls_manager
                                 .handle_inbound_packet(&data, peer_addr)
@@ -153,8 +200,12 @@ impl PeerConnection {
             event_loop_handle,
             signaling_server_handle,
             sctp_manager,
-            media_track_rx: Mutex::new(Some(media_track_rx)),
+            rtc_event_rx,
         })
+    }
+
+    pub async fn recv(&mut self) -> Option<RtcEvent> {
+        self.rtc_event_rx.recv().await
     }
 
     pub fn close(self) {
@@ -165,17 +216,5 @@ impl PeerConnection {
 
     pub async fn create_data_channel(&self) -> Result<DataChannel> {
         Ok(DataChannel::new(0, self.sctp_manager.clone()).await)
-    }
-
-    /// Takes the inbound media track stream. Decrypted RTP packets received on
-    /// the connection are delivered through it. Can only be taken once.
-    pub async fn create_media_track_stream(&self) -> Result<MediaTrackStream> {
-        let media_track_rx = self
-            .media_track_rx
-            .lock()
-            .await
-            .take()
-            .ok_or(anyhow!("media track stream already created"))?;
-        Ok(MediaTrackStream::new(media_track_rx))
     }
 }

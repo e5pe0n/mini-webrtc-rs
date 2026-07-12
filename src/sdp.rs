@@ -14,6 +14,8 @@ pub struct SdpMessage {
 pub struct SdpMedia {
     pub media_id: String,
     pub media_type: MediaType,
+    pub stream_id: String,
+    pub track_id: String,
     pub direction: MediaDirection,
     pub ufrag: String,
     pub pwd: String,

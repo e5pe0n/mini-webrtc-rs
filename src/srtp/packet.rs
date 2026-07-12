@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::srtp::header::RtpHeader;
 use crate::common::buffer::BufReader;
+use crate::srtp::header::RtpHeader;
 
 #[derive(Debug, Clone, Copy)]
 // packet index = roc * 2**16 + seq
@@ -16,6 +16,7 @@ impl SrtpPacketIndex {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct RtpPacket {
     pub header: RtpHeader,
     pub header_size: usize,
@@ -44,5 +45,16 @@ impl RtpPacket {
             payload: payload[0..payload.len() - padding_size].to_vec(),
             raw: reader.buf[pos..buf_len].to_vec(),
         })
+    }
+
+    /// Serializes the packet to wire-format RTP bytes (header + payload). After
+    /// decryption `payload` holds the plaintext while `raw` still contains the
+    /// original (encrypted) bytes, so this is what should be forwarded to a
+    /// media sink such as GStreamer.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.header_size + self.payload.len());
+        bytes.extend_from_slice(&self.raw[..self.header_size]);
+        bytes.extend_from_slice(&self.payload);
+        bytes
     }
 }

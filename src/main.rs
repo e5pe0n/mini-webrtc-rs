@@ -1,8 +1,12 @@
 use std::env;
 
 use anyhow::Result;
-use mini_webrtc_rs::{media_track::MediaTrackStream, peer_connection::PeerConnection};
-use tokio::net::UdpSocket;
+use mini_webrtc_rs::{
+    media_stream_track::MediaStreamTrack,
+    peer_connection::PeerConnection,
+    rtc_event::{RtcEvent, RtcTrackEvent},
+};
+use tokio::{net::UdpSocket, select};
 use tracing::{info, warn};
 
 // GStreamer viewer listens for VP8/PT=96 RTP on this address (see DEV.md).
@@ -11,32 +15,39 @@ const LIVE_RTP_FORWARD_ENABLED_ENV: &str = "MINI_WEBRTC_LIVE_RTP_FORWARD";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let pc = PeerConnection::new().await?;
+    let mut pc = PeerConnection::new().await?;
     let mut dc = pc.create_data_channel().await?;
-    let media_track = pc.create_media_track_stream().await?;
 
-    tokio::spawn(async move {
-        loop {
-            if let Some(event) = dc.recv().await {
-                info!("data channel event: {event:?}");
+    loop {
+        select! {
+            rtc_event = pc.recv() => {
+                match rtc_event {
+                    Some(RtcEvent::RtcTrack(RtcTrackEvent { track })) => {
+                        tokio::spawn(pipe_media_to_gstreamer(track));
+                    }
+                    None => break,
+                }
             }
+            dc_event = dc.recv() => {
+                if let Some(event) = dc_event {
+                    info!("data channel event: {event:?}");
+                }
+            }
+            _ = tokio::signal::ctrl_c() => break,
         }
-    });
+    }
 
-    tokio::spawn(pipe_media_to_gstreamer(media_track));
-
-    tokio::signal::ctrl_c().await?;
     pc.close();
     Ok(())
 }
 
-/// Forwards decrypted RTP packets from the media track to a local GStreamer
+/// Forwards decrypted RTP packets from a media track to a local GStreamer
 /// viewer over UDP (see DEV.md for the matching `gst-launch-1.0` pipeline).
-async fn pipe_media_to_gstreamer(mut media_track: MediaTrackStream) {
+async fn pipe_media_to_gstreamer(mut track: MediaStreamTrack) {
     if !is_live_rtp_forward_enabled() {
         info!("live RTP forwarding to GStreamer disabled by env {LIVE_RTP_FORWARD_ENABLED_ENV}");
         // Drain the track so decrypted packets are not buffered indefinitely.
-        while media_track.recv().await.is_some() {}
+        while track.recv().await.is_some() {}
         return;
     }
 
@@ -47,11 +58,16 @@ async fn pipe_media_to_gstreamer(mut media_track: MediaTrackStream) {
             return;
         }
     };
-    info!("forwarding decrypted RTP packets to GStreamer at {GSTREAMER_RTP_ADDR}");
+    info!(
+        "forwarding decrypted RTP packets for track {} to GStreamer at {GSTREAMER_RTP_ADDR}",
+        track.id
+    );
 
     let mut forwarded: u64 = 0;
-    while let Some(packet) = media_track.recv().await {
-        if let Err(err) = socket.send_to(&packet.rtp, GSTREAMER_RTP_ADDR).await {
+    while let Some(packet) = track.recv().await {
+        // `packet.raw` is still the encrypted bytes; `to_bytes()` rebuilds the
+        // plaintext RTP (header + decrypted payload) for the media sink.
+        if let Err(err) = socket.send_to(&packet.to_bytes(), GSTREAMER_RTP_ADDR).await {
             warn!("failed to forward RTP packet to GStreamer: {err}");
             continue;
         }
@@ -59,8 +75,8 @@ async fn pipe_media_to_gstreamer(mut media_track: MediaTrackStream) {
         forwarded += 1;
         if forwarded == 1 {
             info!(
-                "forwarded first RTP packet to GStreamer (pt={}, ssrc=0x{:08x})",
-                packet.payload_type, packet.ssrc
+                "forwarded first RTP packet to GStreamer (pt={:?}, ssrc=0x{:08x})",
+                packet.header.payload_type, packet.header.ssrc
             );
         }
     }

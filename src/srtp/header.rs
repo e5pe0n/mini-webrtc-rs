@@ -17,6 +17,7 @@ use mini_webrtc_derive::FromPrimitive;
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 // https://datatracker.ietf.org/doc/html/rfc3550#section-5.1
+#[derive(Debug, Clone)]
 pub struct RtpHeader {
     pub version: u8,
     pub padding: bool,
@@ -59,7 +60,7 @@ impl RtpHeader {
 }
 
 // https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-1
-#[derive(FromPrimitive, Debug)]
+#[derive(FromPrimitive, Debug, Clone)]
 #[from(type = "u8", default = "Unsupported")]
 pub enum PayloadType {
     // https://datatracker.ietf.org/doc/html/rfc7741

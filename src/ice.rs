@@ -62,6 +62,8 @@ impl IceAgent {
                 SdpMedia {
                     media_id: "0".to_string(),
                     media_type: MediaType::Video,
+                    stream_id: "stream0".to_string(),
+                    track_id: "track0".to_string(),
                     direction: MediaDirection::Recvonly,
                     payloads: "96".to_string(), // VP8
                     rtp: vec![Rtp {
@@ -91,6 +93,8 @@ impl IceAgent {
                 SdpMedia {
                     media_id: "1".to_string(),
                     media_type: MediaType::Application,
+                    stream_id: "stream0".to_string(),
+                    track_id: "track0".to_string(),
                     direction: MediaDirection::Recvonly,
                     payloads: "webrtc-datachannel".to_string(),
                     rtp: vec![],

@@ -24,6 +24,8 @@ type SdpMessage = {
 type SdpMedia = {
   mediaId: string;
   mediaType: MediaType;
+  streamId: string;
+  trackId: string;
   direction: MediaDirection;
   ufrag: string;
   pwd: string;
@@ -76,27 +78,33 @@ async function sendSdpAnswer(
   const payload: SdpMessage = {
     sessionId: String(answer.origin.sessionId),
     medias:
-      answer.media?.map((m) => ({
-        mediaId: String(m.mid!),
-        mediaType: m.type as MediaType,
-        direction: m.direction ? (m.direction as MediaDirection) : "sendrecv",
-        ufrag: m.iceUfrag!,
-        pwd: m.icePwd!,
-        fingerprintType: m.fingerprint!.type as FingerprintType,
-        fingerprintHash: m.fingerprint!.hash,
-        candidates:
-          m.candidates
-            ?.filter((c) => isValidIPv4(c.ip))
-            .map((c) => ({
-              ip: c.ip,
-              port: c.port,
-              candidateType: "host" as CandidateType,
-              transportType: c.transport as TransportType,
-            })) ?? [],
-        payloads: "",
-        rtp: [],
-        protocol: m.protocol,
-      })) ?? [],
+      answer.media?.map((m) => {
+        const [streamId, trackId] = m.msid!.split("\s+");
+
+        return {
+          mediaId: String(m.mid!),
+          mediaType: m.type as MediaType,
+          streamId,
+          trackId,
+          direction: m.direction ? (m.direction as MediaDirection) : "sendrecv",
+          ufrag: m.iceUfrag!,
+          pwd: m.icePwd!,
+          fingerprintType: m.fingerprint!.type as FingerprintType,
+          fingerprintHash: m.fingerprint!.hash,
+          candidates:
+            m.candidates
+              ?.filter((c) => isValidIPv4(c.ip))
+              .map((c) => ({
+                ip: c.ip,
+                port: c.port,
+                candidateType: "host" as CandidateType,
+                transportType: c.transport as TransportType,
+              })) ?? [],
+          payloads: "",
+          rtp: [],
+          protocol: m.protocol,
+        };
+      }) ?? [],
   };
 
   const resp = await fetch(`${signalingServerUrl}/`, {

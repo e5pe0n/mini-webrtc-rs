@@ -2,7 +2,7 @@ use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::is_dtls_packet;
 use crate::event_loop::{EventQueue, InternalEvent};
-use crate::ice::IceAgent;
+use crate::ice::{IceAgent, Peer};
 use crate::srtp::{is_rtcp_packet, is_rtp_packet};
 use crate::stun::{
     AttributeType, IpFamily, MAGIC_COOKIE, StunMessage, StunMessageBuilder, StunMessageClass,
@@ -51,6 +51,10 @@ impl UdpServer {
         self.socket.send_to(&data, peer_addr).await?;
         debug!("Sent {} bytes to {}", &data.len(), peer_addr);
         Ok(())
+    }
+
+    pub async fn set_remote_peers(&mut self, peers: Vec<Peer>) {
+        self.ice_agent.lock().await.remote_peers = peers;
     }
 
     // pub async fn run(&mut self) -> Result<()> {
