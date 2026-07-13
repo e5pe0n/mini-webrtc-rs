@@ -8,6 +8,7 @@ use crate::media_stream_track::{
     MediaStreamTrack, MediaStreamTrackKind, MediaStreamTrackReadyState,
 };
 use crate::rtc_event::{RtcEvent, RtcTrackEvent};
+use crate::rtc_sctp::RtcSctpTransport;
 use crate::sctp::manager::SctpManager;
 use crate::sdp::MediaType;
 use crate::srtp::SrtpManager;
@@ -32,11 +33,16 @@ use tracing::{debug, info, warn};
 const UDP_SERVER_PORT: u64 = 4433;
 const STUN_SERVER_ADDRESS: &'static str = "stun.l.google.com:19302";
 
+pub struct PeerConnection {
+    pub sctp: Option<RtcSctpTransport>,
+}
+
 pub struct RtcPeerConnection {
     sctp_manager: Arc<Mutex<SctpManager>>,
     rtc_event_rx: mpsc::UnboundedReceiver<RtcEvent>,
     event_loop_handle: JoinHandle<Result<()>>,
     signaling_server_handle: JoinHandle<Result<()>>,
+    pc: Arc<Mutex<PeerConnection>>,
 }
 
 impl RtcPeerConnection {
@@ -85,10 +91,13 @@ impl RtcPeerConnection {
         let internal_event_queue = Arc::new(Mutex::new(VecDeque::new()));
         let (rtc_event_tx, rtc_event_rx) = mpsc::unbounded_channel::<RtcEvent>();
 
+        let pc = PeerConnection { sctp: None };
+        let pc = Arc::new(Mutex::new(pc));
+
         let mut dtls_manager =
             DtlsManager::new(certified_key, fingerprint, internal_event_queue.clone());
         let mut srtp_manager = SrtpManager::new(internal_event_queue.clone());
-        let sctp_manager = SctpManager::new(internal_event_queue.clone());
+        let sctp_manager = SctpManager::new(internal_event_queue.clone(), pc.clone());
         let sctp_manager = Arc::new(Mutex::new(sctp_manager));
         let sctp_manager_clone = sctp_manager.clone();
 
@@ -203,6 +212,7 @@ impl RtcPeerConnection {
             signaling_server_handle,
             sctp_manager,
             rtc_event_rx,
+            pc,
         })
     }
 

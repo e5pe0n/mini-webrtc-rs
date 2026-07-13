@@ -32,7 +32,8 @@ impl DataChannel {
         sctp_manager
             .lock()
             .await
-            .set_data_channel_transport(inbound_dc_tx);
+            .set_data_channel_transport(inbound_dc_tx)
+            .await;
         Self {
             stream_id,
             inbound_dc_rx,

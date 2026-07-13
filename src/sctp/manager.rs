@@ -17,6 +17,8 @@ use crate::{
         dcep::{DataChannelOpenMessage, MessageType},
     },
     internal_event::InternalEvent,
+    rtc_peer_connection::PeerConnection,
+    rtc_sctp::{RtcSctpTransport, RtcSctpTransportState},
     sctp::{
         chunk::{
             COOKIE_LENGTH_IN_BYTES, Chunk, ChunkParam,
@@ -44,10 +46,14 @@ pub struct SctpManager {
     stream_seq_nums: HashMap<u16, u16>,
     event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
     peer_addr: Option<SocketAddr>,
+    pc: Arc<Mutex<PeerConnection>>,
 }
 
 impl SctpManager {
-    pub fn new(event_queue: Arc<Mutex<VecDeque<InternalEvent>>>) -> Self {
+    pub fn new(
+        event_queue: Arc<Mutex<VecDeque<InternalEvent>>>,
+        pc: Arc<Mutex<PeerConnection>>,
+    ) -> Self {
         Self {
             inbound_dc_tx: None,
             local_a_rwnd: 1024 * 1024,
@@ -63,10 +69,15 @@ impl SctpManager {
             stream_seq_nums: HashMap::new(),
             event_queue,
             peer_addr: None,
+            pc,
         }
     }
 
-    pub fn set_data_channel_transport(&mut self, inbound_dc_tx: UnboundedSender<DataChannelEvent>) {
+    pub async fn set_data_channel_transport(
+        &mut self,
+        inbound_dc_tx: UnboundedSender<DataChannelEvent>,
+    ) {
+        self.pc.lock().await.sctp = Some(RtcSctpTransport::new());
         self.inbound_dc_tx = Some(inbound_dc_tx);
     }
 
@@ -159,6 +170,9 @@ impl SctpManager {
                     self.peer_addr = Some(peer_addr);
                     self.send_sctp_chunk(cookie_ack.raw, None, peer_addr)
                         .await?;
+                    if let Some(sctp) = &mut self.pc.lock().await.sctp {
+                        sctp.state = RtcSctpTransportState::Connected;
+                    }
                 }
             },
             Chunk::Data(chunk) => {
