@@ -1,5 +1,12 @@
 # mini-webrtc-rs
 
-# TODO
-
-- [ ] remove unwraps and handle errors
+- [x] RtcPeerConnection
+- [x] MediaStreamTrack
+- [ ] RTCRtpTransceiver
+- [ ] RTCRtpSender
+- [ ] RTCRtpReceiver
+- [x] RTCTrackEvent
+- [ ] RTCDtlsTransport
+- [x] RTCDataChannel
+- [x] RTCDataChannelEvent
+- [ ] RTCStatsReport

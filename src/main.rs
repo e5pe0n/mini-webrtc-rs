@@ -3,8 +3,8 @@ use std::env;
 use anyhow::Result;
 use mini_webrtc_rs::{
     media_stream_track::MediaStreamTrack,
-    peer_connection::PeerConnection,
     rtc_event::{RtcEvent, RtcTrackEvent},
+    rtc_peer_connection::RtcPeerConnection,
 };
 use tokio::{net::UdpSocket, select};
 use tracing::{info, warn};
@@ -15,7 +15,7 @@ const LIVE_RTP_FORWARD_ENABLED_ENV: &str = "MINI_WEBRTC_LIVE_RTP_FORWARD";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut pc = PeerConnection::new().await?;
+    let mut pc = RtcPeerConnection::new().await?;
     let mut dc = pc.create_data_channel().await?;
 
     loop {

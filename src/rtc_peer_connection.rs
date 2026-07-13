@@ -32,14 +32,14 @@ use tracing::{debug, info, warn};
 const UDP_SERVER_PORT: u64 = 4433;
 const STUN_SERVER_ADDRESS: &'static str = "stun.l.google.com:19302";
 
-pub struct PeerConnection {
+pub struct RtcPeerConnection {
     sctp_manager: Arc<Mutex<SctpManager>>,
     rtc_event_rx: mpsc::UnboundedReceiver<RtcEvent>,
     event_loop_handle: JoinHandle<Result<()>>,
     signaling_server_handle: JoinHandle<Result<()>>,
 }
 
-impl PeerConnection {
+impl RtcPeerConnection {
     pub async fn new() -> Result<Self> {
         tracing_subscriber::fmt::init();
 
