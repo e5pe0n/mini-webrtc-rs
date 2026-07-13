@@ -15,6 +15,7 @@ use tracing::info;
 
 use crate::{
     ice::{IceAgent, Peer},
+    internal_event::{EventQueue, InternalEvent::SdpAnswer},
     sdp::SdpMessage,
 };
 
@@ -25,6 +26,7 @@ pub struct SignalingServer {
 
 struct AppState {
     ice_agent: Arc<Mutex<IceAgent>>,
+    internal_event_queue: Arc<Mutex<EventQueue>>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -33,8 +35,14 @@ struct SimpleResponse {
 }
 
 impl SignalingServer {
-    pub async fn new(ice_agent: Arc<Mutex<IceAgent>>) -> Self {
-        let shared_state = Arc::new(AppState { ice_agent });
+    pub async fn new(
+        ice_agent: Arc<Mutex<IceAgent>>,
+        internal_event_queue: Arc<Mutex<EventQueue>>,
+    ) -> Self {
+        let shared_state = Arc::new(AppState {
+            ice_agent,
+            internal_event_queue,
+        });
 
         let cors = CorsLayer::new()
             .allow_origin(HeaderValue::from_static("http://localhost:5173"))
@@ -87,20 +95,12 @@ async fn handle_post_answer(
         answer.medias.len()
     );
 
-    let remote_peers = answer
-        .medias
-        .iter()
-        .map(|media| Peer {
-            ufrag: media.ufrag.clone(),
-            pwd: media.pwd.clone(),
-            fingerprint: media.fingerprint_hash.clone(),
-        })
-        .collect::<Vec<_>>();
-    info!(
-        "POST / signaling: remote peer configured; remote_peers={:?}",
-        remote_peers.len()
-    );
-    state.ice_agent.lock().await.remote_peers = remote_peers;
+    state
+        .internal_event_queue
+        .lock()
+        .await
+        .push_back(SdpAnswer(answer));
+
     (
         StatusCode::OK,
         Json(SimpleResponse {

@@ -13,9 +13,3 @@ pub enum InternalEvent {
     InboundRtpPacket(TransportMessage),
     DtlsConnected(SrtpEncryptionKeys),
 }
-
-pub struct EventLoop {}
-
-impl EventLoop {
-    pub async fn run() {}
-}

@@ -6,7 +6,7 @@ use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::ApplicationDataMessage;
 use crate::dtls::DtlsMessage::ApplicationData;
-use crate::event_loop::InternalEvent::{self, OutboundDtlsPacket};
+use crate::internal_event::InternalEvent::{self, OutboundDtlsPacket};
 use crate::srtp::crypto::{SrtpEncryptionKeys, generate_keying_material};
 use anyhow::{Context, Result, anyhow};
 use p256::ecdsa::signature::hazmat::PrehashVerifier;

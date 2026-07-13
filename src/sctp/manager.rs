@@ -16,7 +16,7 @@ use crate::{
         DataChannelEvent, DataChannelMessage,
         dcep::{DataChannelOpenMessage, MessageType},
     },
-    event_loop::InternalEvent,
+    internal_event::InternalEvent,
     sctp::{
         chunk::{
             COOKIE_LENGTH_IN_BYTES, Chunk, ChunkParam,

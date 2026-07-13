@@ -1,8 +1,8 @@
 pub mod common;
 pub mod data_channel;
 pub mod dtls;
-pub mod event_loop;
 pub mod ice;
+pub mod internal_event;
 pub mod media_stream_track;
 pub mod peer_connection;
 pub mod rtc_event;

@@ -2,8 +2,8 @@ use crate::common::TransportMessage;
 use crate::data_channel::DataChannel;
 use crate::dtls::Fingerprint;
 use crate::dtls::manager::DtlsManager;
-use crate::event_loop::InternalEvent;
 use crate::ice::Peer;
+use crate::internal_event::InternalEvent;
 use crate::media_stream_track::{
     MediaStreamTrack, MediaStreamTrackKind, MediaStreamTrackReadyState,
 };
@@ -100,10 +100,12 @@ impl PeerConnection {
         .await
         .context("init udp server")?;
 
+        let internal_event_queue_clone = internal_event_queue.clone();
+
         let event_loop_handle = tokio::spawn(async move {
             let sctp_manager = sctp_manager_clone;
             loop {
-                let next_event = internal_event_queue.lock().await.pop_front();
+                let next_event = internal_event_queue_clone.lock().await.pop_front();
                 if let Some(event) = next_event {
                     match event {
                         InternalEvent::SdpAnswer(answer) => {
@@ -193,7 +195,7 @@ impl PeerConnection {
             }
         });
 
-        let signaling_server = SignalingServer::new(ice_agent).await;
+        let signaling_server = SignalingServer::new(ice_agent, internal_event_queue).await;
         let signaling_server_handle = tokio::spawn(async move { signaling_server.run().await });
 
         Ok(Self {

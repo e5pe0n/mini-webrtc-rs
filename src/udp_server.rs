@@ -1,8 +1,8 @@
 use crate::common::TransportMessage;
 use crate::common::buffer::{BufReader, BufWriter};
 use crate::dtls::is_dtls_packet;
-use crate::event_loop::{EventQueue, InternalEvent};
 use crate::ice::{IceAgent, Peer};
+use crate::internal_event::{EventQueue, InternalEvent};
 use crate::srtp::{is_rtcp_packet, is_rtp_packet};
 use crate::stun::{
     AttributeType, IpFamily, MAGIC_COOKIE, StunMessage, StunMessageBuilder, StunMessageClass,
@@ -57,55 +57,6 @@ impl UdpServer {
         self.ice_agent.lock().await.remote_peers = peers;
     }
 
-    // pub async fn run(&mut self) -> Result<()> {
-    //     let mut buf = vec![0u8; 65535];
-
-    //     loop {
-    //         tokio::select! {
-    //             inbound_message = self.socket.recv_from(&mut buf) => {
-    //                 let (len, peer_addr) = inbound_message?;
-    //                 debug!("Received {} bytes from {}", len, peer_addr);
-
-    //                 self.handle_inbound_message(&buf[..len], peer_addr).await?;
-    //             }
-    //             outbound_message = self.outbound_dtls_rx.recv() => {
-    //                 if let Some(message) = outbound_message {
-    //                     self.socket.send_to(&message.data, message.peer_addr).await?;
-    //                     debug!("Sent {} bytes to {}", &message.data.len(), message.peer_addr);
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
-    // pub async fn run(&mut self) -> Result<()> {
-    //     let mut buf = vec![0u8; 65535];
-
-    //     loop {
-    //         tokio::select! {
-    //             recv_result = self.socket.recv_from(&mut buf) => {
-    //                 let (len, peer_addr) = recv_result?;
-    //                 debug!("Received {} bytes from {}", len, peer_addr);
-
-    //                 self.handle_inbound_message(&buf[..len], peer_addr).await?;
-    //             }
-    //             outbound_message = self.outbound_message_rx.recv() => {
-    //                 if let Some(message) = outbound_message {
-    //                     self.socket.send_to(&message.data, message.peer_addr).await?;
-    //                     debug!("Sent {} bytes to {}", &message.data.len(), message.peer_addr);
-    //                 }
-    //             }
-    //             _ = self.dtls_manager.recv_outbound_sctp() => {}
-    //             _ = self.sctp_manager.recv() => {}
-    //             control_message = self.control_rx.recv() => {
-    //                 if let Some(UdpServerControlMessage::CreateDataChannel { response_tx }) = control_message {
-    //                     let _ = response_tx.send(self.create_data_channel().await);
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
     async fn handle_inbound_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         if data.is_empty() {
             return Ok(());
@@ -125,22 +76,6 @@ impl UdpServer {
                     peer_addr,
                     data: data.to_vec(),
                 }));
-            // if let Err(err) = self.dtls_manager.handle_dtls_packet(data, peer_addr).await {
-            //     if matches!(self.dtls_manager.state, DtlsState::Connected) {
-            //         warn!(
-            //             "ignored dtls packet parse error after connected; peer={peer_addr}; error={err:#}"
-            //         );
-            //         return Ok(());
-            //     }
-            //     return Err(err);
-            // }
-            // if self.srtp_manager.is_none()
-            //     && matches!(self.dtls_manager.state, DtlsState::Connected)
-            // {
-            //     let srtp_encryption_keys = self.dtls_manager.export_keying_material()?;
-            //     self.srtp_manager = Some(SrtpManager::new(srtp_encryption_keys));
-            //     info!("srtp manager initialized after dtls connected");
-            // }
             return Ok(());
         }
 
@@ -174,20 +109,6 @@ impl UdpServer {
         );
         Ok(())
     }
-
-    // async fn handle_rtp_packet(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
-    //     if let Some(srtp_manager) = self.srtp_manager.as_mut() {
-    //         if let Err(err) = srtp_manager.handle_rtp_packet(data, peer_addr) {
-    //             warn!(
-    //                 "failed to handle RTP/SRTP packet; peer={peer_addr}; len={}; error={err:#}",
-    //                 data.len()
-    //             );
-    //         }
-    //     } else {
-    //         warn!("received RTP packet before SRTP is ready; peer={peer_addr}");
-    //     }
-    //     Ok(())
-    // }
 
     async fn handle_stun_message(&mut self, data: &[u8], peer_addr: SocketAddr) -> Result<()> {
         // respond to stun binding request of ice

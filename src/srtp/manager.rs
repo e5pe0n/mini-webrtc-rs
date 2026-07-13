@@ -3,7 +3,7 @@ use tokio::sync::{Mutex, mpsc::UnboundedSender};
 
 use crate::{
     common::buffer::BufReader,
-    event_loop::InternalEvent,
+    internal_event::InternalEvent,
     srtp::{
         SrtpSsrcState,
         crypto::{SrtpEncryptionKeys, SrtpGcm},
